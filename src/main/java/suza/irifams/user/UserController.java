@@ -3,8 +3,11 @@ package suza.irifams.user;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
+import suza.irifams.audit.AuditLogger;
+import suza.irifams.enums.Role;
 
 import java.util.List;
 
@@ -15,6 +18,7 @@ public class UserController {
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final AuditLogger auditLogger;
 
     /*
      * GET ALL USERS
@@ -62,11 +66,19 @@ public class UserController {
 
         if (userRepository.existsByUsername(
                 user.getUsername())) {
+            auditLogger.log(
+                    user.getUsername(),
+                    "CREATE USER",
+                    "USER",
+                    "Username already exists",
+                    "FAILED"
+            );
 
             return ResponseEntity.badRequest()
                     .body("Username already exists");
 
         }
+
 
         user.setPassword(
                 passwordEncoder.encode(
@@ -76,10 +88,18 @@ public class UserController {
 
         user.setEnabled(true);
 
-        return ResponseEntity.ok(
-                userRepository.save(user)
+        User savedUser =
+                userRepository.save(user);
+
+        auditLogger.log(
+                savedUser.getUsername(),
+                "CREATE USER",
+                "USER",
+                "User created successfully",
+                "SUCCESS"
         );
 
+        return ResponseEntity.ok(savedUser);
     }
 
 
@@ -87,7 +107,7 @@ public class UserController {
      * UPDATE USER
      */
 
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR','STAKEHOLDER')")
     @PutMapping("/{id}")
     public ResponseEntity<?> updateUser(
 
@@ -132,16 +152,35 @@ public class UserController {
                     user.setImage(
                             updatedUser.getImage()
                     );
+                    auditLogger.log(
+                            user.getUsername(),
+                            "UPDATE USER",
+                            "USER",
+                            "User updated successfully",
+                            "SUCCESS"
+                    );
 
                     return ResponseEntity.ok(
                             userRepository.save(user)
                     );
 
+
+
                 })
 
-                .orElse(
-                        ResponseEntity.notFound().build()
-                );
+                .orElseGet(() -> {
+
+                    auditLogger.log(
+                            "UNKNOWN",
+                            "UPDATE USER",
+                            "USER",
+                            "Failed to update user. User not found",
+                            "FAILED"
+                    );
+
+                    return ResponseEntity.notFound().build();
+
+                });
 
     }
 
@@ -155,18 +194,36 @@ public class UserController {
             @PathVariable Long id
     ) {
 
-        if (!userRepository.existsById(id)) {
+        User user = userRepository
+                .findById(id)
+                .orElse(null);
+
+        if (user == null) {
+
+            auditLogger.log(
+                    "UNKNOWN",
+                    "DELETE USER",
+                    "USER",
+                    "Failed to delete user. User not found",
+                    "FAILED"
+            );
 
             return ResponseEntity.notFound().build();
-
         }
+
+        auditLogger.log(
+                user.getUsername(),
+                "DELETE USER",
+                "USER",
+                "User deleted successfully",
+                "SUCCESS"
+        );
 
         userRepository.deleteById(id);
 
         return ResponseEntity.ok(
                 "User deleted successfully"
         );
-
     }
 
 
@@ -188,14 +245,150 @@ public class UserController {
                     );
 
                     userRepository.save(user);
+                    auditLogger.log(
+                            user.getUsername(),
+                            "STATUS CHANGED",
+                            "USER",
+                            "User account status changed",
+                            "SUCCESS"
+                    );
 
                     return ResponseEntity.ok(user);
 
                 })
 
-                .orElse(
-                        ResponseEntity.notFound().build()
+                .orElseGet(() -> {
+
+                    auditLogger.log(
+                            "UNKNOWN",
+                            "STATUS CHANGED",
+                            "USER",
+                            "Failed to change user status",
+                            "FAILED"
+                    );
+
+                    return ResponseEntity.notFound().build();
+
+                });
+
+    }
+
+    @PreAuthorize(
+            "hasAnyRole('ADMIN','SUPERVISOR')")
+    @GetMapping("/farmers")
+    public List<User> getFarmers() {
+
+        return userRepository.findByRole(
+                suza.irifams.enums.Role.FARMER
+        );
+
+    }
+
+    @PreAuthorize(
+            "hasAnyRole('ADMIN','SUPERVISOR')")
+    @GetMapping("/farmers/block/{blockName}")
+    public List<User> getFarmersByBlock(
+            @PathVariable String blockName
+    ) {
+
+        return userRepository.findByRoleAndBlockName(
+                suza.irifams.enums.Role.FARMER,
+                blockName
+        );
+
+    }
+
+    @PreAuthorize("hasRole('SUPERVISOR')")
+    @GetMapping("/my-farmers")
+    public List<User> getMyFarmers(
+            Authentication authentication
+    ) {
+
+        // username wa supervisor aliyelogin
+        String username =
+                authentication.getName();
+
+        // pata supervisor kwenye DB
+        User supervisor = userRepository
+                .findByUsername(username)
+                .orElseThrow();
+
+        // rudisha farmers wa block yake tu
+        return userRepository
+                .findByRoleAndBlockName(
+                        Role.FARMER,
+                        supervisor.getBlockName()
                 );
+    }
+
+    @PreAuthorize("isAuthenticated()")
+    @GetMapping("/my-profile")
+    public ResponseEntity<?> getMyProfile(
+            Authentication authentication
+    ) {
+
+        User user = userRepository
+
+                .findByUsername(authentication.getName())
+
+                .orElseThrow();
+
+        return ResponseEntity.ok(user);
+
+    }
+
+    @PreAuthorize("isAuthenticated()")
+    @PatchMapping("/change-password")
+    public ResponseEntity<?> changePassword(
+
+            Authentication authentication,
+
+            @RequestBody ChangePasswordRequest request
+
+    ){
+
+        User user = userRepository
+
+                .findByUsername(authentication.getName())
+
+                .orElseThrow();
+
+        if(!passwordEncoder.matches(
+                request.getCurrentPassword(),
+                user.getPassword())){
+
+            return ResponseEntity.badRequest()
+                    .body("Current password is incorrect");
+
+        }
+
+        user.setPassword(
+
+                passwordEncoder.encode(
+                        request.getNewPassword()
+                )
+
+        );
+
+        userRepository.save(user);
+
+        auditLogger.log(
+
+                user.getUsername(),
+
+                "CHANGE PASSWORD",
+
+                "USER",
+
+                "Password changed successfully",
+
+                "SUCCESS"
+
+        );
+
+        return ResponseEntity.ok(
+                "Password updated successfully"
+        );
 
     }
 

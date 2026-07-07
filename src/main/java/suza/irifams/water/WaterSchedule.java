@@ -2,6 +2,7 @@ package suza.irifams.water;
 
 import jakarta.persistence.*;
 import lombok.*;
+import suza.irifams.enums.ScheduleStatus;
 import suza.irifams.plot.Plot;
 import suza.irifams.user.User;
 
@@ -31,7 +32,8 @@ public class WaterSchedule {
 
     private String season;
 
-    private String status;
+    @Enumerated(EnumType.STRING)
+    private ScheduleStatus status;
 
     @Column(columnDefinition = "TEXT")
     private String notes;
@@ -43,5 +45,13 @@ public class WaterSchedule {
     @ManyToOne
     @JoinColumn(name = "supervisor_id")
     private User supervisor;
+
+    private boolean reminderSent;
+
+    private boolean startedNotificationSent;
+
+    private boolean completedNotificationSent;
+
+
 
 }

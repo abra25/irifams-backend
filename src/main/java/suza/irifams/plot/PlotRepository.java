@@ -8,9 +8,13 @@ public interface PlotRepository
         extends JpaRepository<Plot, Long> {
 
     boolean existsByPlotNo(String plotNo);
-
-    List<Plot> findByBlock(String block);
+    long countByFarmer_Id(Long farmerId);
 
     List<Plot> findByFarmerId(Long farmerId);
+    List<Plot> findByBlock(String block);
 
+    List<Plot> findByFarmerBlockName(String blockName);
+
+    List<Plot> findByBlockOrderByIdDesc(String block);
+    Long countByBlock(String block);
 }

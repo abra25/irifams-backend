@@ -1,6 +1,7 @@
 package suza.irifams.user;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
 import suza.irifams.enums.Role;
 
 import java.util.List;
@@ -17,4 +18,21 @@ public interface UserRepository
 
     List<User> findByRole(String role);
 
+    List<User> findTop5ByOrderByIdDesc();
+
+    List<User> findByRole(
+            suza.irifams.enums.Role role
+    );
+    List<User> findByRoleAndBlockName(
+            Role role,
+            String blockName
+    );
+
+    @Query("""
+SELECT COUNT(u)
+FROM User u
+WHERE u.role='FARMER'
+AND u.blockName=:block
+""")
+    Long countFarmersByBlock(String block);
 }

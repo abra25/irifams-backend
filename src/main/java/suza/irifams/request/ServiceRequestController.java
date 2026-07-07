@@ -11,6 +11,7 @@ import suza.irifams.notification.NotificationRepository;
 import suza.irifams.plot.Plot;
 import suza.irifams.plot.PlotRepository;
 import suza.irifams.user.User;
+import org.springframework.security.core.Authentication;
 import suza.irifams.user.UserRepository;
 
 import java.time.LocalDateTime;
@@ -82,9 +83,11 @@ public class ServiceRequestController {
         // Audit log
         auditLogger.log(
                 farmer.getUsername(),
-                "SUBMIT",
+                "REQUEST SUBMITTED",
                 "REQUEST",
-                "Submitted " + request.getServiceType()
+                "Submitted "
+                        + request.getServiceType(),
+                "SUCCESS"
         );
 
         return ResponseEntity.ok(savedRequest);
@@ -126,26 +129,74 @@ public class ServiceRequestController {
             "hasAnyRole('ADMIN','SUPERVISOR')")
     @PatchMapping("/{id}/approve")
     public ResponseEntity<?> approveRequest(
-            @PathVariable Long id
+            @PathVariable Long id,
+            @RequestBody ApproveRequest dto,
+            Authentication authentication
     ) {
 
         return repository.findById(id)
 
                 .map(req -> {
 
+                    if(authentication.getAuthorities()
+                            .stream()
+                            .anyMatch(a ->
+                                    a.getAuthority()
+                                            .equals("ROLE_SUPERVISOR"))){
+
+                        User supervisor =
+                                userRepository
+                                        .findByUsername(
+                                                authentication.getName()
+                                        )
+                                        .orElseThrow();
+
+                        if(!req.getPlot()
+                                .getBlock()
+                                .equals(
+                                        supervisor.getBlockName())){
+
+                            auditLogger.log(
+                                    supervisor.getUsername(),
+                                    "REQUEST APPROVED",
+                                    "REQUEST",
+                                    "Unauthorized approval attempt",
+                                    "FAILED"
+                            );
+
+                            return ResponseEntity
+                                    .status(403)
+                                    .body("Access denied");
+                        }
+                    }
+
                     req.setStatus(
-                            RequestStatus.APPROVED
+                            RequestStatus.WAITING_PAYMENT
+                    );
+
+                    req.setAmount(dto.getAmount());
+
+                    req.setControlNumber(
+                            "CN-" + System.currentTimeMillis()
                     );
 
                     repository.save(req);
 
+                    repository.save(req);
+
                     auditLogger.log(
-                            req.getFarmer().getUsername(),
-                            "APPROVE",
+                            req.getFarmer()
+                                    .getUsername(),
+
+                            "REQUEST APPROVED",
+
                             "REQUEST",
+
                             "Request ID "
                                     + req.getId()
-                                    + " approved"
+                                    + " approved",
+
+                            "SUCCESS"
                     );
 
                     notificationRepository.save(
@@ -153,31 +204,40 @@ public class ServiceRequestController {
                             Notification.builder()
 
                                     .message(
-                                            "Your request #" +
-                                                    req.getId() +
-                                                    " has been approved."
+                                            "Your request #"
+                                                    + req.getId()
+                                                    + " has been approved."
                                     )
 
                                     .user(req.getFarmer())
 
                                     .isRead(false)
 
-                                    .createdAt(LocalDateTime.now())
+                                    .createdAt(
+                                            LocalDateTime.now()
+                                    )
 
                                     .build()
-
                     );
 
                     return ResponseEntity.ok(req);
 
                 })
 
-                .orElse(
-                        ResponseEntity.notFound().build()
-                );
+                .orElseGet(() -> {
 
+                    auditLogger.log(
+                            "UNKNOWN",
+                            "REQUEST APPROVED",
+                            "REQUEST",
+                            "Failed to approve request",
+                            "FAILED"
+                    );
+
+                    return ResponseEntity.notFound().build();
+
+                });
     }
-
     /*
      * Reject Request
      */
@@ -201,11 +261,12 @@ public class ServiceRequestController {
 
                     auditLogger.log(
                             req.getFarmer().getUsername(),
-                            "REJECT",
+                            "REQUEST REJECTED",
                             "REQUEST",
                             "Request ID "
                                     + req.getId()
-                                    + " rejected"
+                                    + " rejected",
+                            "SUCCESS"
                     );
 
                     notificationRepository.save(
@@ -232,9 +293,19 @@ public class ServiceRequestController {
 
                 })
 
-                .orElse(
-                        ResponseEntity.notFound().build()
-                );
+                .orElseGet(() -> {
+
+                    auditLogger.log(
+                            "UNKNOWN",
+                            "REQUEST REJECTED",
+                            "REQUEST",
+                            "Failed to reject request",
+                            "FAILED"
+                    );
+
+                    return ResponseEntity.notFound().build();
+
+                });
 
     }
 
@@ -266,10 +337,11 @@ public class ServiceRequestController {
 
                     auditLogger.log(
                             req.getFarmer().getUsername(),
-                            "CONTROL_NUMBER",
+                            "CONTROL NUMBER GENERATED",
                             "PAYMENT",
                             "Control number generated for Request "
-                                    + req.getId()
+                                    + req.getId(),
+                            "SUCCESS"
                     );
 
                     notificationRepository.save(
@@ -295,8 +367,58 @@ public class ServiceRequestController {
 
                 })
 
-                .orElse(
-                        ResponseEntity.notFound().build()
+                .orElseGet(() -> {
+
+                    auditLogger.log(
+                            "UNKNOWN",
+                            "CONTROL NUMBER GENERATED",
+                            "PAYMENT",
+                            "Failed to generate control number",
+                            "FAILED"
+                    );
+
+                    return ResponseEntity.notFound().build();
+
+                });
+    }
+
+    @PreAuthorize("hasRole('SUPERVISOR')")
+    @GetMapping("/my-requests")
+    public List<ServiceRequest> getMyRequests(
+            Authentication authentication
+    ){
+
+        String username =
+                authentication.getName();
+
+        User supervisor =
+                userRepository
+                        .findByUsername(username)
+                        .orElseThrow();
+
+        return repository
+                .findByPlotBlockOrderByCreatedAtDesc(
+                        supervisor.getBlockName()
+                );
+    }
+
+    @PreAuthorize("hasRole('FARMER')")
+    @GetMapping("/my-farm-requests")
+    public List<ServiceRequest> getMyFarmRequests(
+            Authentication authentication
+    ){
+
+        String username =
+                authentication.getName();
+
+        User farmer =
+                userRepository
+                        .findByUsername(username)
+                        .orElseThrow();
+
+        return repository
+                .findByFarmerId(
+                        farmer.getId()
                 );
     }
 

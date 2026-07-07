@@ -19,7 +19,9 @@ public class AuditLogger {
 
             String module,
 
-            String description
+            String description,
+
+            String status
 
     ) {
 
@@ -35,6 +37,8 @@ public class AuditLogger {
 
                         .description(description)
 
+                        .status(status)
+
                         .createdAt(LocalDateTime.now())
 
                         .build()
@@ -42,5 +46,4 @@ public class AuditLogger {
         );
 
     }
-
 }

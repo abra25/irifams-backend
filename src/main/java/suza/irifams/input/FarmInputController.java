@@ -1,5 +1,5 @@
 package suza.irifams.input;
-
+import org.springframework.security.core.Authentication;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -43,8 +43,19 @@ public class FarmInputController {
             @RequestBody FarmInput input
     ) {
 
-        return inputRepository.save(input);
+        FarmInput saved =
+                inputRepository.save(input);
 
+        auditLogger.log(
+                "ADMIN",
+                "ADD INPUT",
+                "INPUT",
+                "Added input "
+                        + saved.getName(),
+                "SUCCESS"
+        );
+
+        return saved;
     }
 
     /*
@@ -73,6 +84,14 @@ public class FarmInputController {
                     input.setSeason(updated.getSeason());
                     input.setImage(updated.getImage());
                     input.setStatus(updated.getStatus());
+                    auditLogger.log(
+                            "ADMIN",
+                            "UPDATE INPUT",
+                            "INPUT",
+                            "Updated input "
+                                    + input.getName(),
+                            "SUCCESS"
+                    );
 
                     return ResponseEntity.ok(
                             inputRepository.save(input)
@@ -95,6 +114,31 @@ public class FarmInputController {
     public void deleteInput(
             @PathVariable Long id
     ) {
+        FarmInput input =
+                inputRepository.findById(id)
+                        .orElse(null);
+
+        if(input == null){
+
+            auditLogger.log(
+                    "UNKNOWN",
+                    "DELETE INPUT",
+                    "INPUT",
+                    "Failed to delete input",
+                    "FAILED"
+            );
+
+            return;
+        }
+
+        auditLogger.log(
+                "ADMIN",
+                "DELETE INPUT",
+                "INPUT",
+                "Deleted input "
+                        + input.getName(),
+                "SUCCESS"
+        );
 
         inputRepository.deleteById(id);
 
@@ -104,8 +148,7 @@ public class FarmInputController {
      * DISTRIBUTE INPUT
      */
 
-    @PreAuthorize(
-            "hasAnyRole('ADMIN','SUPERVISOR')")
+    @PreAuthorize("hasRole('SUPERVISOR')")
     @PostMapping("/{inputId}/distribute")
     public ResponseEntity<?> distributeInput(
 
@@ -113,9 +156,17 @@ public class FarmInputController {
 
             @RequestParam Long farmerId,
 
-            @RequestParam Double quantity
+            @RequestParam Double quantity,
+
+            Authentication authentication
 
     ) {
+
+        String username = authentication.getName();
+
+        User supervisor = userRepository
+                .findByUsername(username)
+                .orElseThrow();
 
         FarmInput input = inputRepository
                 .findById(inputId)
@@ -125,27 +176,54 @@ public class FarmInputController {
                 .findById(farmerId)
                 .orElseThrow();
 
-        if (input.getQuantity() < quantity) {
+        // hakikisha farmer ni wa block ya supervisor
+
+        if(!farmer.getBlockName()
+                .equals(supervisor.getBlockName())){
+
+            auditLogger.log(
+                    supervisor.getUsername(),
+                    "INPUT DISTRIBUTE",
+                    "INPUT",
+                    "Attempted to distribute input to farmer outside assigned block",
+                    "FAILED"
+            );
+
+            return ResponseEntity.badRequest()
+                    .body("You can distribute only within your block");
+        }
+
+        if(input.getQuantity() < quantity){
+
+            auditLogger.log(
+                    farmer.getUsername(),
+                    "INPUT DISTRIBUTION",
+                    "INPUT",
+                    "Insufficient stock",
+                    "FAILED"
+            );
 
             return ResponseEntity.badRequest()
                     .body("Insufficient stock");
-
         }
 
         input.setQuantity(
                 input.getQuantity() - quantity
         );
 
-        if (input.getQuantity() <= 0) {
+        if(input.getQuantity() <= 0){
 
             input.setStatus("Out of Stock");
-
         }
 
         inputRepository.save(input);
 
         InputDistribution distribution =
                 InputDistribution.builder()
+
+                        .farmInput(input)
+
+                        .farmer(farmer)
 
                         .quantity(quantity)
 
@@ -155,30 +233,28 @@ public class FarmInputController {
                                 LocalDateTime.now()
                         )
 
-                        .farmInput(input)
-
-                        .farmer(farmer)
-
                         .build();
 
         distributionRepository.save(distribution);
 
         auditLogger.log(
                 farmer.getUsername(),
-                "INPUT_DISTRIBUTION",
+                "INPUT DISTRIBUTION",
                 "INPUT",
-                "Received "
-                        + quantity
-                        + " "
-                        + input.getUnit()
-                        + " of "
-                        + input.getName()
+                quantity + " " +
+                        input.getUnit() +
+                        " of " +
+                        input.getName() +
+                        " distributed",
+                "SUCCESS"
         );
 
         return ResponseEntity.ok(
-                "Input distributed successfully"
+                java.util.Map.of(
+                        "message",
+                        "Input distributed successfully"
+                )
         );
-
     }
 
     /*

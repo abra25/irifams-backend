@@ -3,7 +3,10 @@ package suza.irifams.notification;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
+import suza.irifams.user.User;
+import suza.irifams.user.UserRepository;
 
 import java.util.List;
 
@@ -13,23 +16,36 @@ import java.util.List;
 public class NotificationController {
 
     private final NotificationRepository repository;
+    private final UserRepository userRepository;
 
-    @GetMapping("/user/{userId}")
-    public List<Notification> getUserNotifications(
-            @PathVariable Long userId
-    ) {
+    @PreAuthorize("isAuthenticated()")
+    @GetMapping("/my-notifications")
+    public List<Notification> getMyNotifications(
+            Authentication authentication
+    ){
 
-        return repository
-                .findByUserIdOrderByCreatedAtDesc(userId);
+        User user = userRepository
+                .findByUsername(authentication.getName())
+                .orElseThrow();
+
+        return repository.findByUserIdOrderByCreatedAtDesc(
+                user.getId()
+        );
     }
 
-    @GetMapping("/user/{userId}/unread-count")
+    @PreAuthorize("isAuthenticated()")
+    @GetMapping("/my-unread-count")
     public long getUnreadCount(
-            @PathVariable Long userId
-    ) {
+            Authentication authentication
+    ){
 
-        return repository
-                .countByUserIdAndIsReadFalse(userId);
+        User user = userRepository
+                .findByUsername(authentication.getName())
+                .orElseThrow();
+
+        return repository.countByUserIdAndIsReadFalse(
+                user.getId()
+        );
     }
 
     @PatchMapping("/{id}/read")

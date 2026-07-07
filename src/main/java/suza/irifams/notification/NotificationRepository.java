@@ -11,4 +11,9 @@ public interface NotificationRepository
 
     long countByUserIdAndIsReadFalse(Long userId);
 
+    List<Notification> findTop5ByOrderByCreatedAtDesc();
+
+    List<Notification>
+    findTop5ByUserIdOrderByCreatedAtDesc(Long userId);
+
 }

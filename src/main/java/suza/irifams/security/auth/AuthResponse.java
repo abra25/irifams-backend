@@ -9,6 +9,8 @@ import lombok.*;
 
 public class AuthResponse {
 
+    private Long id;
+
     private String token;
 
     private String image;
@@ -16,6 +18,16 @@ public class AuthResponse {
     private String username;
 
     private String fullName;
+
+    private String email;
+
+    private String phone;
+
+    private String gender;
+
+    private String institution;
+
+    private String blockName;
 
     private String role;
 }

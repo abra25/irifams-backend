@@ -6,6 +6,7 @@ import org.springframework.web.bind.annotation.*;
 import suza.irifams.audit.AuditLogger;
 import suza.irifams.user.User;
 import suza.irifams.user.UserRepository;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.access.prepost.PreAuthorize;
 
 import java.util.List;
@@ -52,49 +53,79 @@ public class PlotController {
     /*
      * CREATE NEW PLOT
      */
-
-    /*
-     * CREATE NEW PLOT
-     */
-
     @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
     @PostMapping
     public ResponseEntity<?> addPlot(
 
             @RequestParam Long farmerId,
 
-            @RequestBody Plot plot
+            @RequestBody Plot plot,
+
+            Authentication authentication
 
     ) {
 
         if (plotRepository.existsByPlotNo(
                 plot.getPlotNo())) {
 
+            auditLogger.log(
+                    "UNKNOWN",
+                    "CREATE PLOT",
+                    "PLOT",
+                    "Failed to create plot. Plot number already exists",
+                    "FAILED"
+            );
+
             return ResponseEntity.badRequest()
                     .body("Plot Number already exists");
-
         }
 
-        User farmer = userRepository.findById(farmerId)
-                .orElseThrow();
+        User farmer =
+                userRepository.findById(farmerId)
+                        .orElse(null);
+
+        if(farmer == null){
+
+            auditLogger.log(
+                    "UNKNOWN",
+                    "CREATE PLOT",
+                    "PLOT",
+                    "Farmer not found",
+                    "FAILED"
+            );
+
+            return ResponseEntity.badRequest()
+                    .body("Farmer not found");
+        }
+
+        String username =
+                authentication.getName();
+
+        User supervisor =
+                userRepository.findByUsername(username)
+                        .orElseThrow();
+
+        // block automatic
+        plot.setBlock(
+                supervisor.getBlockName()
+        );
 
         plot.setFarmer(farmer);
 
-        // Save plot first
-        Plot savedPlot = plotRepository.save(plot);
+        Plot savedPlot =
+                plotRepository.save(plot);
 
-        // Audit log
         auditLogger.log(
                 farmer.getUsername(),
-                "CREATE",
+                "CREATE PLOT",
                 "PLOT",
-                "Plot " +
-                        savedPlot.getPlotNo() +
-                        " created successfully"
+                "Plot "
+                        + savedPlot.getPlotNo()
+                        + " created successfully",
+                "SUCCESS"
         );
 
         return ResponseEntity.ok(savedPlot);
-
     }
 
     /*
@@ -113,10 +144,29 @@ public class PlotController {
 
     }
 
+    @PreAuthorize("hasRole('SUPERVISOR')")
+    @GetMapping("/my-plots")
+    public List<Plot> getMyPlots(
+            Authentication authentication
+    ) {
+
+        String username =
+                authentication.getName();
+
+        User supervisor =
+                userRepository
+                        .findByUsername(username)
+                        .orElseThrow();
+
+        return plotRepository
+                .findByBlockOrderByIdDesc(
+                        supervisor.getBlockName()
+                );
+    }
+
     /*
      * UPDATE PLOT
      */
-
     @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
     @PutMapping("/{id}")
     public ResponseEntity<?> updatePlot(
@@ -131,8 +181,7 @@ public class PlotController {
 
                 .map(plot -> {
 
-                    plot.setBlock(
-                            updatedPlot.getBlock());
+                    // block haisogezwi
 
                     plot.setSize(
                             updatedPlot.getSize());
@@ -152,16 +201,43 @@ public class PlotController {
                     plot.setStatus(
                             updatedPlot.getStatus());
 
+                    auditLogger.log(
+                            plot.getFarmer()
+                                    .getUsername(),
+
+                            "UPDATE PLOT",
+
+                            "PLOT",
+
+                            "Plot "
+                                    + plot.getPlotNo()
+                                    + " updated successfully",
+
+                            "SUCCESS"
+                    );
+
                     return ResponseEntity.ok(
-                            plotRepository.save(plot));
+                            plotRepository.save(plot)
+                    );
 
                 })
 
-                .orElse(
-                        ResponseEntity.notFound().build());
+                .orElseGet(() -> {
+
+                    auditLogger.log(
+                            "UNKNOWN",
+                            "UPDATE PLOT",
+                            "PLOT",
+                            "Failed to update plot",
+                            "FAILED"
+                    );
+
+                    return ResponseEntity.notFound()
+                            .build();
+
+                });
 
     }
-
     /*
      * DELETE PLOT
      */
@@ -178,11 +254,55 @@ public class PlotController {
 
         }
 
+        Plot plot =
+                plotRepository.findById(id)
+                        .orElse(null);
+
+        if(plot == null){
+
+            auditLogger.log(
+                    "UNKNOWN",
+                    "DELETE PLOT",
+                    "PLOT",
+                    "Failed to delete plot. Plot not found",
+                    "FAILED"
+            );
+
+            return ResponseEntity.notFound().build();
+        }
+
+        auditLogger.log(
+                plot.getFarmer().getUsername(),
+                "DELETE PLOT",
+                "PLOT",
+                "Plot "
+                        + plot.getPlotNo()
+                        + " deleted successfully",
+                "SUCCESS"
+        );
+
         plotRepository.deleteById(id);
 
         return ResponseEntity.ok(
                 "Plot deleted successfully");
-
     }
 
+
+    @PreAuthorize("hasRole('FARMER')")
+    @GetMapping("/my-farm-plots")
+    public List<Plot> getMyFarmPlots(
+            Authentication authentication
+    ){
+
+        String username =
+                authentication.getName();
+
+        User farmer = userRepository
+                .findByUsername(username)
+                .orElseThrow();
+
+        return plotRepository.findByFarmerId(
+                farmer.getId()
+        );
+    }
 }

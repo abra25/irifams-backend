@@ -26,4 +26,9 @@ public class DashboardStatsDto {
 
     private long waterSchedules;
 
+    private long myPlots;
+
+
+    private Double outstandingPayments;
+
 }

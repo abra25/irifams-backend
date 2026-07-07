@@ -14,6 +14,31 @@ public interface ServiceRequestRepository
     long countByStatus(RequestStatus status);
 
     long countByServiceType(ServiceType serviceType);
+    List<ServiceRequest> findByPlotBlock(String block);
+    List<ServiceRequest>
+    findByPlotBlockOrderByCreatedAtDesc(
+            String block
+    );
+
+    Long countByPlot_BlockAndStatus(
+            String block,
+            RequestStatus status
+    );
+
+    List<ServiceRequest>
+    findTop5ByPlot_BlockOrderByCreatedAtDesc(
+            String block
+    );
+
+    long countByPlot_Farmer_IdAndStatus(
+            Long farmerId,
+            RequestStatus status
+    );
+
+    List<ServiceRequest>
+    findTop5ByPlot_Farmer_IdOrderByCreatedAtDesc(
+            Long farmerId
+    );
 
 
 }

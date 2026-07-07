@@ -22,11 +22,12 @@ public class AuditLog {
 
     private String action;
 
+    private String module;
+
     @Column(columnDefinition = "TEXT")
     private String description;
 
-    private String module;
+    private String status; // SUCCESS / FAILED
 
     private LocalDateTime createdAt;
-
 }

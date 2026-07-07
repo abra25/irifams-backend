@@ -9,4 +9,6 @@ public interface AuditLogRepository
 
     List<AuditLog> findAllByOrderByCreatedAtDesc();
 
+    List<AuditLog> findTop5ByOrderByCreatedAtDesc();
+
 }

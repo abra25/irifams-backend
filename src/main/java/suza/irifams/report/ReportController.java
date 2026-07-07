@@ -1,5 +1,21 @@
 package suza.irifams.report;
+import com.itextpdf.kernel.pdf.PdfDocument;
+import com.itextpdf.kernel.pdf.PdfWriter;
 
+import com.itextpdf.layout.Document;
+import com.itextpdf.layout.element.Paragraph;
+import com.itextpdf.layout.element.Table;
+
+import com.itextpdf.layout.properties.TextAlignment;
+
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+
+import java.io.ByteArrayOutputStream;
+import java.time.LocalDate;
+
+import suza.irifams.enums.Role;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -48,7 +64,7 @@ public class ReportController {
 
                 .approvedRequests(
                         requestRepository.countByStatus(
-                                RequestStatus.APPROVED)
+                                RequestStatus.WAITING_VERIFICATION)
                 )
 
                 .completedRequests(
@@ -77,6 +93,219 @@ public class ReportController {
                 )
 
                 .build();
+    }
+
+    @GetMapping("/export/pdf")
+    @PreAuthorize(
+            "hasAnyRole('ADMIN','SUPERVISOR','STAKEHOLDER')")
+    public ResponseEntity<byte[]> exportPdf() throws Exception {
+
+        ByteArrayOutputStream out =
+                new ByteArrayOutputStream();
+
+        PdfWriter writer =
+                new PdfWriter(out);
+
+        PdfDocument pdf =
+                new PdfDocument(writer);
+
+        Document document =
+                new Document(pdf);
+
+        // TITLE
+
+        Paragraph title =
+                new Paragraph(
+                        "IRIFAMS SYSTEM REPORT"
+                )
+
+                        .setBold()
+                        .setFontSize(20)
+                        .setTextAlignment(
+                                TextAlignment.CENTER
+                        );
+
+        document.add(title);
+
+        document.add(
+                new Paragraph(
+                        "Irrigation Rice Farming Management System"
+                )
+                        .setTextAlignment(
+                                TextAlignment.CENTER
+                        )
+        );
+
+        document.add(
+                new Paragraph(
+                        "Generated on: "
+                                + LocalDate.now()
+                )
+        );
+
+        document.add(new Paragraph("\n"));
+
+        // SUMMARY SECTION
+
+        document.add(
+                new Paragraph("1. Summary Statistics")
+                        .setBold()
+                        .setFontSize(16)
+        );
+
+        Table table = new Table(2);
+
+        table.addCell("Total Farmers");
+        table.addCell(
+                String.valueOf(
+                        userRepository.countByRole(
+                                Role.FARMER)
+                )
+        );
+
+        table.addCell("Total Farm Plots");
+        table.addCell(
+                String.valueOf(
+                        plotRepository.count()
+                )
+        );
+
+        table.addCell("Total Requests");
+        table.addCell(
+                String.valueOf(
+                        requestRepository.count()
+                )
+        );
+
+        table.addCell("Approved Requests");
+        table.addCell(
+                String.valueOf(
+                        requestRepository.countByStatus(
+                                RequestStatus.WAITING_PAYMENT)
+                )
+        );
+
+        table.addCell("Completed Requests");
+        table.addCell(
+                String.valueOf(
+                        requestRepository.countByStatus(
+                                RequestStatus.COMPLETED)
+                )
+        );
+
+        table.addCell("Total Payments");
+        table.addCell(
+                String.valueOf(
+                        paymentRepository.count()
+                )
+        );
+
+        table.addCell("Total Revenue");
+        table.addCell(
+                "TZS "
+                        + paymentRepository.getTotalRevenue()
+        );
+
+        table.addCell("Available Inputs");
+        table.addCell(
+                String.valueOf(
+                        inputRepository.count()
+                )
+        );
+
+        table.addCell("Distributed Inputs");
+        table.addCell(
+                String.valueOf(
+                        distributionRepository.count()
+                )
+        );
+
+        table.addCell("Water Schedules");
+        table.addCell(
+                String.valueOf(
+                        waterRepository.count()
+                )
+        );
+
+        document.add(table);
+
+        // ANALYSIS
+
+        document.add(new Paragraph("\n"));
+
+        document.add(
+                new Paragraph(
+                        "2. System Analysis"
+                )
+                        .setBold()
+                        .setFontSize(16)
+        );
+
+        document.add(
+
+                new Paragraph(
+
+                        "The IRIFAMS system continues to improve "
+                                + "management of irrigation farming activities. "
+                                + "Farmers are able to submit service requests, "
+                                + "receive farm inputs, monitor water schedules "
+                                + "and make service payments electronically. "
+                                + "The report indicates the current operational "
+                                + "status of the system."
+
+                )
+
+        );
+
+        // CONCLUSION
+
+        document.add(new Paragraph("\n"));
+
+        document.add(
+                new Paragraph(
+                        "3. Conclusion"
+                )
+                        .setBold()
+                        .setFontSize(16)
+        );
+
+        document.add(
+                new Paragraph(
+                        "Based on the current statistics, "
+                                + "IRIFAMS has enhanced transparency, "
+                                + "efficiency and accountability in "
+                                + "irrigation farming management."
+                )
+        );
+
+        document.add(new Paragraph("\n\n"));
+
+        document.add(
+                new Paragraph(
+                        "Prepared By: ____________________"
+                )
+        );
+
+        document.add(
+                new Paragraph(
+                        "Approved By: ____________________"
+                )
+        );
+
+        document.close();
+
+        return ResponseEntity.ok()
+
+                .header(
+                        HttpHeaders.CONTENT_DISPOSITION,
+                        "attachment; filename=irifams-report.pdf"
+                )
+
+                .contentType(
+                        MediaType.APPLICATION_PDF
+                )
+
+                .body(out.toByteArray());
     }
 
 }
