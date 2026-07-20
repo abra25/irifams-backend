@@ -7,8 +7,10 @@ import org.springframework.web.bind.annotation.*;
 import suza.irifams.audit.AuditLogger;
 import suza.irifams.enums.PaymentStatus;
 import suza.irifams.enums.RequestStatus;
+import suza.irifams.enums.Role;
 import suza.irifams.notification.Notification;
 import suza.irifams.notification.NotificationRepository;
+import suza.irifams.notification.NotificationService;
 import suza.irifams.request.ServiceRequest;
 import suza.irifams.request.ServiceRequestRepository;
 import org.springframework.security.core.Authentication;
@@ -25,7 +27,7 @@ public class PaymentController {
 
     private final PaymentRepository paymentRepository;
     private final ServiceRequestRepository requestRepository;
-    private final NotificationRepository notificationRepository;
+    private final NotificationService notificationService;
     private final AuditLogger auditLogger;
     private final UserRepository userRepository;
 
@@ -67,7 +69,7 @@ public class PaymentController {
                 request.getFarmer().getUsername(),
                 "PAYMENT SUBMITTED",
                 "PAYMENT",
-                "Farmer confirmed payment",
+                "Submitted payment for Request #" + request.getId(),
                 "SUCCESS"
         );
 
@@ -76,24 +78,35 @@ public class PaymentController {
 
         // Notification to Farmer
 
-        notificationRepository.save(
+        // Farmer
+        notificationService.notify(
+                request.getFarmer(),
+                "Payment submitted successfully. Waiting for verification."
+        );
 
-                Notification.builder()
+// Supervisor wa block
+        userRepository.findByRoleAndBlockName(
+                Role.SUPERVISOR,
+                request.getPlot().getBlock()
+        ).forEach(supervisor ->
 
-                        .message(
-                                "Payment submitted successfully. Waiting for verification."
-                        )
-
-                        .user(request.getFarmer())
-
-                        .isRead(false)
-
-                        .createdAt(LocalDateTime.now())
-
-                        .build()
+                notificationService.notify(
+                        supervisor,
+                        "New payment submitted for verification."
+                )
 
         );
 
+// Admins
+        userRepository.findByRole(Role.ADMIN)
+                .forEach(admin ->
+
+                        notificationService.notify(
+                                admin,
+                                "A farmer has submitted a payment waiting for verification."
+                        )
+
+                );
         return ResponseEntity.ok(savedPayment);
 
     }
@@ -102,7 +115,7 @@ public class PaymentController {
     @GetMapping("/my-payments")
     public List<Payment> getMyPayments(
             Authentication authentication
-    ){
+    ) {
 
         String username = authentication.getName();
 
@@ -116,7 +129,7 @@ public class PaymentController {
                         .anyMatch(a ->
                                 a.getAuthority().equals("ROLE_SUPERVISOR"));
 
-        if(isSupervisor){
+        if (isSupervisor) {
 
             return paymentRepository
                     .findByFarmerBlockNameOrderByPaymentDateDesc(
@@ -134,9 +147,7 @@ public class PaymentController {
     /*
      * Admin verifies payment
      */
-
-    @PreAuthorize(
-            "hasAnyRole('ADMIN','SUPERVISOR')")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
     @PatchMapping("/{id}/verify")
     public ResponseEntity<?> verifyPayment(
             @PathVariable Long id,
@@ -147,97 +158,101 @@ public class PaymentController {
 
                 .map(payment -> {
 
-                    if(authentication.getAuthorities()
+                    User actor = userRepository
+                            .findByUsername(authentication.getName())
+                            .orElseThrow();
 
-                            .stream()
-
-                            .anyMatch(a ->
-
-                                    a.getAuthority()
-                                            .equals("ROLE_SUPERVISOR"))){
-
-                        User supervisor =
-                                userRepository
-
-                                        .findByUsername(
-                                                authentication.getName()
-                                        )
-
-                                        .orElseThrow();
+                    // Supervisor anaweza verify block yake tu
+                    if(actor.getRole() == Role.SUPERVISOR){
 
                         if(!payment.getFarmer()
-
                                 .getBlockName()
-
-                                .equals(
-                                        supervisor.getBlockName()
-                                )){
+                                .equals(actor.getBlockName())){
 
                             auditLogger.log(
-                                    supervisor.getUsername(),
-                                    "PAYMENT VERIFIED",
+                                    actor.getUsername(),
+                                    "VERIFY PAYMENT",
                                     "PAYMENT",
-                                    "Unauthorized payment verification attempt",
+                                    "Attempted to verify payment outside assigned block",
                                     "FAILED"
                             );
 
                             return ResponseEntity
                                     .status(403)
                                     .body("Access denied");
-
                         }
-
                     }
 
-                    payment.setStatus(
-                            PaymentStatus.PAID
-                    );
+                    payment.setStatus(PaymentStatus.PAID);
 
                     paymentRepository.save(payment);
 
                     ServiceRequest request =
                             payment.getServiceRequest();
 
-                    request.setStatus(
-                            RequestStatus.PAID
-                    );
+                    request.setStatus(RequestStatus.PAID);
 
                     requestRepository.save(request);
 
                     auditLogger.log(
-                            payment.getFarmer()
-                                    .getUsername(),
 
-                            "PAYMENT VERIFIED",
+                            actor.getUsername(),
+
+                            "VERIFY PAYMENT",
 
                             "PAYMENT",
 
-                            "Payment verified successfully",
+                            "Verified payment #"
+                                    + payment.getId(),
 
                             "SUCCESS"
-                    );
-
-                    notificationRepository.save(
-
-                            Notification.builder()
-
-                                    .message(
-                                            "Your payment has been verified successfully."
-                                    )
-
-                                    .user(
-                                            request.getFarmer()
-                                    )
-
-                                    .isRead(false)
-
-                                    .createdAt(
-                                            LocalDateTime.now()
-                                    )
-
-                                    .build()
 
                     );
+
+                    // Farmer
+                    notificationService.notify(
+
+                            payment.getFarmer(),
+
+                            "Your payment has been verified successfully."
+
+                    );
+
+                    // Actor
+                    notificationService.notify(
+
+                            actor,
+
+                            "You verified payment #"
+                                    + payment.getId()
+
+                    );
+
+                    // Other admins
+                    userRepository.findByRole(Role.ADMIN)
+
+                            .stream()
+
+                            .filter(admin ->
+
+                                    !admin.getId()
+                                            .equals(actor.getId())
+
+                            )
+
+                            .forEach(admin ->
+
+                                    notificationService.notify(
+
+                                            admin,
+
+                                            "Payment #"
+                                                    + payment.getId()
+                                                    + " has been verified."
+
+                                    )
+
+                            );
 
                     return ResponseEntity.ok(payment);
 
@@ -246,11 +261,17 @@ public class PaymentController {
                 .orElseGet(() -> {
 
                     auditLogger.log(
+
                             "UNKNOWN",
-                            "PAYMENT VERIFIED",
+
+                            "VERIFY PAYMENT",
+
                             "PAYMENT",
-                            "Failed to verify payment",
+
+                            "Payment not found",
+
                             "FAILED"
+
                     );
 
                     return ResponseEntity.notFound().build();
@@ -288,16 +309,20 @@ public class PaymentController {
 
     }
 
-    @PreAuthorize(
-            "hasAnyRole('ADMIN','SUPERVISOR')")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
     @PatchMapping("/{id}/reject")
     public ResponseEntity<?> rejectPayment(
-            @PathVariable Long id
-    ) {
+            @PathVariable Long id,
+            Authentication authentication
+    ){
 
         return paymentRepository.findById(id)
 
                 .map(payment -> {
+
+                    User actor = userRepository
+                            .findByUsername(authentication.getName())
+                            .orElseThrow();
 
                     payment.setStatus(
                             PaymentStatus.REJECTED
@@ -315,39 +340,61 @@ public class PaymentController {
                     requestRepository.save(request);
 
                     auditLogger.log(
-                            payment.getFarmer()
-                                    .getUsername(),
 
-                            "PAYMENT REJECTED",
+                            actor.getUsername(),
+
+                            "REJECT PAYMENT",
 
                             "PAYMENT",
 
-                            "Payment rejected",
+                            "Rejected payment #"
+                                    + payment.getId(),
 
                             "SUCCESS"
-                    );
-
-                    notificationRepository.save(
-
-                            Notification.builder()
-
-                                    .message(
-                                            "Your payment has been rejected. Please re-submit payment details."
-                                    )
-
-                                    .user(
-                                            payment.getFarmer()
-                                    )
-
-                                    .isRead(false)
-
-                                    .createdAt(
-                                            LocalDateTime.now()
-                                    )
-
-                                    .build()
 
                     );
+
+                    notificationService.notify(
+
+                            payment.getFarmer(),
+
+                            "Your payment has been rejected. Please re-submit payment details."
+
+                    );
+
+                    notificationService.notify(
+
+                            actor,
+
+                            "You rejected payment #"
+                                    + payment.getId()
+
+                    );
+
+                    userRepository.findByRole(Role.ADMIN)
+
+                            .stream()
+
+                            .filter(admin ->
+
+                                    !admin.getId()
+                                            .equals(actor.getId())
+
+                            )
+
+                            .forEach(admin ->
+
+                                    notificationService.notify(
+
+                                            admin,
+
+                                            "Payment #"
+                                                    + payment.getId()
+                                                    + " has been rejected."
+
+                                    )
+
+                            );
 
                     return ResponseEntity.ok(payment);
 
@@ -356,15 +403,17 @@ public class PaymentController {
                 .orElseGet(() -> {
 
                     auditLogger.log(
+
                             "UNKNOWN",
 
-                            "PAYMENT REJECTED",
+                            "REJECT PAYMENT",
 
                             "PAYMENT",
 
-                            "Failed to reject payment",
+                            "Payment not found",
 
                             "FAILED"
+
                     );
 
                     return ResponseEntity.notFound().build();
@@ -372,35 +421,4 @@ public class PaymentController {
                 });
 
     }
-
-//    @PreAuthorize("hasRole('FARMER')")
-//    @GetMapping("/my-payments")
-//    public List<Payment> getFarmerPayments(
-//
-//            Authentication authentication
-//
-//    ){
-//
-//        String username=
-//
-//                authentication.getName();
-//
-//        User farmer=
-//
-//                userRepository
-//
-//                        .findByUsername(username)
-//
-//                        .orElseThrow();
-//
-//        return paymentRepository
-//
-//                .findByFarmerId(
-//
-//                        farmer.getId()
-//
-//                );
-//
-//    }
-
 }

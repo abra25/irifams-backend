@@ -30,4 +30,6 @@ public class AuthResponse {
     private String blockName;
 
     private String role;
+
+    private boolean temporaryPassword;
 }

@@ -4,11 +4,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import suza.irifams.enums.ScheduleStatus;
-import suza.irifams.notification.Notification;
-import suza.irifams.notification.NotificationRepository;
+import suza.irifams.notification.NotificationService;
 
 import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
 
@@ -17,9 +15,9 @@ import java.util.List;
 public class WaterScheduleStatusUpdater {
 
     private final WaterScheduleRepository repository;
-    private final NotificationRepository notificationRepository;
+    private final NotificationService notificationService;
 
-    @Scheduled(fixedRate = 60000) // every minute
+    @Scheduled(fixedRate = 60000) // Every 1 minute
     public void updateStatuses() {
 
         List<WaterSchedule> schedules = repository.findAll();
@@ -29,9 +27,9 @@ public class WaterScheduleStatusUpdater {
 
         for (WaterSchedule schedule : schedules) {
 
-            // ===============================
+            // ==========================================
             // 30 Minutes Reminder
-            // ===============================
+            // ==========================================
 
             if (schedule.getStatus() == ScheduleStatus.UPCOMING
                     && !schedule.isReminderSent()
@@ -43,24 +41,14 @@ public class WaterScheduleStatusUpdater {
                 if (!now.isBefore(reminderTime)
                         && now.isBefore(schedule.getStartTime())) {
 
-                    notificationRepository.save(
+                    notificationService.notify(
 
-                            Notification.builder()
+                            schedule.getPlot().getFarmer(),
 
-                                    .user(schedule.getPlot().getFarmer())
-
-                                    .message(
-                                            "Reminder! Your irrigation period for Plot "
-                                                    + schedule.getPlot().getPlotNo()
-                                                    + " will begin at "
-                                                    + schedule.getStartTime()
-                                    )
-
-                                    .isRead(false)
-
-                                    .createdAt(LocalDateTime.now())
-
-                                    .build()
+                            "Reminder! Your irrigation period for Plot "
+                                    + schedule.getPlot().getPlotNo()
+                                    + " will begin at "
+                                    + schedule.getStartTime()
 
                     );
 
@@ -70,33 +58,25 @@ public class WaterScheduleStatusUpdater {
                 }
             }
 
-            // ===============================
+            // ==========================================
             // UPCOMING -> ACTIVE
-            // ===============================
+            // ==========================================
 
             if (schedule.getStatus() == ScheduleStatus.UPCOMING
                     && schedule.getIrrigationDate().isEqual(today)
                     && !now.isBefore(schedule.getStartTime())) {
 
-                schedule.setStatus(ScheduleStatus.ACTIVE);
+                schedule.setStatus(
+                        ScheduleStatus.ACTIVE
+                );
 
                 if (!schedule.isStartedNotificationSent()) {
 
-                    notificationRepository.save(
+                    notificationService.notify(
 
-                            Notification.builder()
+                            schedule.getPlot().getFarmer(),
 
-                                    .user(schedule.getPlot().getFarmer())
-
-                                    .message(
-                                            "Your irrigation period has started."
-                                    )
-
-                                    .isRead(false)
-
-                                    .createdAt(LocalDateTime.now())
-
-                                    .build()
+                            "Your irrigation period has started."
 
                     );
 
@@ -106,9 +86,9 @@ public class WaterScheduleStatusUpdater {
                 repository.save(schedule);
             }
 
-            // ===============================
+            // ==========================================
             // ACTIVE -> COMPLETED
-            // ===============================
+            // ==========================================
 
             if (schedule.getStatus() == ScheduleStatus.ACTIVE
                     && (
@@ -117,30 +97,29 @@ public class WaterScheduleStatusUpdater {
 
                             ||
 
-                            (schedule.getIrrigationDate().isEqual(today)
-                                    && now.isAfter(schedule.getEndTime()))
+                            (
+
+                                    schedule.getIrrigationDate().isEqual(today)
+
+                                            &&
+
+                                            now.isAfter(schedule.getEndTime())
+
+                            )
 
             )) {
 
-                schedule.setStatus(ScheduleStatus.COMPLETED);
+                schedule.setStatus(
+                        ScheduleStatus.COMPLETED
+                );
 
                 if (!schedule.isCompletedNotificationSent()) {
 
-                    notificationRepository.save(
+                    notificationService.notify(
 
-                            Notification.builder()
+                            schedule.getPlot().getFarmer(),
 
-                                    .user(schedule.getPlot().getFarmer())
-
-                                    .message(
-                                            "Your irrigation schedule has been completed."
-                                    )
-
-                                    .isRead(false)
-
-                                    .createdAt(LocalDateTime.now())
-
-                                    .build()
+                            "Your irrigation schedule has been completed."
 
                     );
 

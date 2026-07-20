@@ -6,8 +6,10 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import suza.irifams.audit.AuditLogger;
 import suza.irifams.enums.RequestStatus;
+import suza.irifams.enums.Role;
 import suza.irifams.notification.Notification;
 import suza.irifams.notification.NotificationRepository;
+import suza.irifams.notification.NotificationService;
 import suza.irifams.plot.Plot;
 import suza.irifams.plot.PlotRepository;
 import suza.irifams.user.User;
@@ -25,7 +27,7 @@ public class ServiceRequestController {
     private final ServiceRequestRepository repository;
     private final UserRepository userRepository;
     private final PlotRepository plotRepository;
-    private final NotificationRepository notificationRepository;
+    private final NotificationService notificationService;
     private final AuditLogger auditLogger;
 
     /*
@@ -62,23 +64,37 @@ public class ServiceRequestController {
                 repository.save(request);
 
         // Create notification
-        notificationRepository.save(
+        // Farmer
+        notificationService.notify(
+                farmer,
+                "Your request has been submitted successfully."
+        );
 
-                Notification.builder()
+// Supervisor wa block
+        userRepository.findByRoleAndBlockName(
+                Role.SUPERVISOR,
+                plot.getBlock()
+        ).forEach(supervisor ->
 
-                        .message(
-                                "Your request has been submitted successfully."
-                        )
-
-                        .user(farmer)
-
-                        .isRead(false)
-
-                        .createdAt(LocalDateTime.now())
-
-                        .build()
+                notificationService.notify(
+                        supervisor,
+                        "New service request has been submitted for Plot "
+                                + plot.getPlotNo()
+                )
 
         );
+
+// All Admins
+        userRepository.findByRole(Role.ADMIN)
+                .forEach(admin ->
+
+                        notificationService.notify(
+                                admin,
+                                "New service request submitted by "
+                                        + farmer.getFullName()
+                        )
+
+                );
 
         // Audit log
         auditLogger.log(
@@ -199,26 +215,43 @@ public class ServiceRequestController {
                             "SUCCESS"
                     );
 
-                    notificationRepository.save(
+                    // Farmer
+                    notificationService.notify(
 
-                            Notification.builder()
+                            req.getFarmer(),
 
-                                    .message(
-                                            "Your request #"
-                                                    + req.getId()
-                                                    + " has been approved."
-                                    )
+                            "Your request #" + req.getId()
+                                    + " has been approved."
 
-                                    .user(req.getFarmer())
-
-                                    .isRead(false)
-
-                                    .createdAt(
-                                            LocalDateTime.now()
-                                    )
-
-                                    .build()
                     );
+
+// Supervisor aliyefanya approve
+                    User supervisor = userRepository
+                            .findByUsername(authentication.getName())
+                            .orElseThrow();
+
+                    notificationService.notify(
+
+                            supervisor,
+
+                            "You approved Request #" + req.getId()
+
+                    );
+
+// Admins
+                    userRepository.findByRole(Role.ADMIN)
+                            .forEach(admin ->
+
+                                    notificationService.notify(
+
+                                            admin,
+
+                                            "Request #" + req.getId()
+                                                    + " approved."
+
+                                    )
+
+                            );
 
                     return ResponseEntity.ok(req);
 
@@ -269,26 +302,29 @@ public class ServiceRequestController {
                             "SUCCESS"
                     );
 
-                    notificationRepository.save(
+                    notificationService.notify(
 
-                            Notification.builder()
+                            req.getFarmer(),
 
-                                    .message(
-                                            "Your request #" +
-                                                    req.getId() +
-                                                    " has been rejected."
-                                    )
-
-                                    .user(req.getFarmer())
-
-                                    .isRead(false)
-
-                                    .createdAt(LocalDateTime.now())
-
-                                    .build()
+                            "Your request #"
+                                    + req.getId()
+                                    + " has been rejected."
 
                     );
 
+                    userRepository.findByRole(Role.ADMIN)
+                            .forEach(admin ->
+
+                                    notificationService.notify(
+
+                                            admin,
+
+                                            "Request #" + req.getId()
+                                                    + " has been rejected."
+
+                                    )
+
+                            );
                     return ResponseEntity.ok(req);
 
                 })
@@ -344,25 +380,28 @@ public class ServiceRequestController {
                             "SUCCESS"
                     );
 
-                    notificationRepository.save(
+                    notificationService.notify(
 
-                            Notification.builder()
+                            req.getFarmer(),
 
-                                    .message(
-                                            "Control Number generated: "
-                                                    + req.getControlNumber()
-                                    )
-
-                                    .user(req.getFarmer())
-
-                                    .isRead(false)
-
-                                    .createdAt(LocalDateTime.now())
-
-                                    .build()
+                            "Control Number generated: "
+                                    + req.getControlNumber()
 
                     );
 
+                    userRepository.findByRole(Role.ADMIN)
+                            .forEach(admin ->
+
+                                    notificationService.notify(
+
+                                            admin,
+
+                                            "Control Number generated for Request #"
+                                                    + req.getId()
+
+                                    )
+
+                            );
                     return ResponseEntity.ok(req);
 
                 })

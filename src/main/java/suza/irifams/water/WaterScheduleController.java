@@ -5,16 +5,14 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import suza.irifams.audit.AuditLogger;
+import suza.irifams.enums.Role;
 import suza.irifams.enums.ScheduleStatus;
-import suza.irifams.notification.Notification;
-import suza.irifams.notification.NotificationRepository;
+import suza.irifams.notification.NotificationService;
 import suza.irifams.plot.Plot;
 import suza.irifams.plot.PlotRepository;
 import suza.irifams.user.User;
 import suza.irifams.user.UserRepository;
 import org.springframework.security.core.Authentication;
-
-import java.time.LocalDateTime;
 import java.util.List;
 
 @RestController
@@ -25,7 +23,7 @@ public class WaterScheduleController {
     private final WaterScheduleRepository repository;
     private final PlotRepository plotRepository;
     private final UserRepository userRepository;
-    private final NotificationRepository notificationRepository;
+    private final NotificationService notificationService;
     private final AuditLogger auditLogger;
 
     /*
@@ -144,44 +142,70 @@ public class WaterScheduleController {
 
         schedule.setSupervisor(supervisor);
 
-        if(schedule.getStatus() == null){
+        if (schedule.getStatus() == null) {
             schedule.setStatus(ScheduleStatus.UPCOMING);
         }
 
-        WaterSchedule saved =
-                repository.save(schedule);
+        WaterSchedule saved = repository.save(schedule);
 
         auditLogger.log(
+
                 supervisor.getUsername(),
+
                 "CREATE WATER SCHEDULE",
+
                 "IRRIGATION",
+
                 "Created irrigation schedule for Plot "
                         + plot.getPlotNo(),
+
                 "SUCCESS"
+
         );
 
-        notificationRepository.save(
+// Farmer
+        notificationService.notify(
 
-                Notification.builder()
+                plot.getFarmer(),
 
-                        .message(
-                                "New irrigation schedule has been assigned for Plot "
+                "New irrigation schedule has been assigned for Plot "
+                        + plot.getPlotNo()
+
+        );
+
+// Supervisor
+        notificationService.notify(
+
+                supervisor,
+
+                "You created a new irrigation schedule for Plot "
+                        + plot.getPlotNo()
+
+        );
+
+// Other Admins
+        userRepository.findByRole(Role.ADMIN)
+
+                .stream()
+
+                .filter(admin -> !admin.getId().equals(supervisor.getId()))
+
+                .forEach(admin ->
+
+                        notificationService.notify(
+
+                                admin,
+
+                                "New irrigation schedule created for Plot "
                                         + plot.getPlotNo()
+
                         )
 
-                        .user(plot.getFarmer())
-
-                        .isRead(false)
-
-                        .createdAt(LocalDateTime.now())
-
-                        .build()
-
-        );
+                );
 
         return ResponseEntity.ok(saved);
-
     }
+
 
     @PreAuthorize("hasRole('FARMER')")
     @GetMapping("/my-farm-schedules")
@@ -221,19 +245,26 @@ public class WaterScheduleController {
      */
 
     @PutMapping("/{id}")
-    @PreAuthorize(
-            "hasAnyRole('ADMIN','SUPERVISOR')")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
     public ResponseEntity<?> updateSchedule(
 
             @PathVariable Long id,
 
-            @RequestBody WaterSchedule updated
+            @RequestBody WaterSchedule updated,
 
-    ) {
+            Authentication authentication
+
+    ){
 
         return repository.findById(id)
 
                 .map(schedule -> {
+
+                    User actor = userRepository
+
+                            .findByUsername(authentication.getName())
+
+                            .orElseThrow();
 
                     schedule.setIrrigationDate(
                             updated.getIrrigationDate());
@@ -256,29 +287,83 @@ public class WaterScheduleController {
                     schedule.setNotes(
                             updated.getNotes());
 
+                    repository.save(schedule);
+
                     auditLogger.log(
-                            schedule.getPlot()
-                                    .getFarmer()
-                                    .getUsername(),
+
+                            actor.getUsername(),
 
                             "UPDATE WATER SCHEDULE",
 
                             "IRRIGATION",
 
-                            "Water schedule updated successfully",
+                            "Updated irrigation schedule #"
+                                    + schedule.getId(),
 
                             "SUCCESS"
+
                     );
 
-                    return ResponseEntity.ok(
-                            repository.save(schedule)
+                    notificationService.notify(
+
+                            schedule.getPlot().getFarmer(),
+
+                            "Your irrigation schedule has been updated."
+
                     );
+
+                    notificationService.notify(
+
+                            actor,
+
+                            "You updated irrigation schedule #"
+                                    + schedule.getId()
+
+                    );
+
+                    userRepository.findByRole(Role.ADMIN)
+
+                            .stream()
+
+                            .filter(admin -> !admin.getId().equals(actor.getId()))
+
+                            .forEach(admin ->
+
+                                    notificationService.notify(
+
+                                            admin,
+
+                                            "Water schedule #"
+                                                    + schedule.getId()
+                                                    + " has been updated."
+
+                                    )
+
+                            );
+
+                    return ResponseEntity.ok(schedule);
 
                 })
 
-                .orElse(
-                        ResponseEntity.notFound().build()
-                );
+                .orElseGet(() -> {
+
+                    auditLogger.log(
+
+                            "UNKNOWN",
+
+                            "UPDATE WATER SCHEDULE",
+
+                            "IRRIGATION",
+
+                            "Schedule not found",
+
+                            "FAILED"
+
+                    );
+
+                    return ResponseEntity.notFound().build();
+
+                });
 
     }
 
@@ -289,45 +374,84 @@ public class WaterScheduleController {
     @DeleteMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<?> deleteSchedule(
-            @PathVariable Long id
+
+            @PathVariable Long id,
+
+            Authentication authentication
+
     ){
 
-        WaterSchedule schedule =
-                repository.findById(id)
-                        .orElse(null);
+        User actor = userRepository
+
+                .findByUsername(authentication.getName())
+
+                .orElseThrow();
+
+        WaterSchedule schedule = repository
+
+                .findById(id)
+
+                .orElse(null);
 
         if(schedule == null){
 
             auditLogger.log(
-                    "UNKNOWN",
+
+                    actor.getUsername(),
+
                     "DELETE WATER SCHEDULE",
+
                     "IRRIGATION",
-                    "Failed to delete schedule. Schedule not found",
+
+                    "Schedule not found",
+
                     "FAILED"
+
             );
 
             return ResponseEntity.notFound().build();
         }
 
+        repository.delete(schedule);
+
         auditLogger.log(
-                schedule.getPlot()
-                        .getFarmer()
-                        .getUsername(),
+
+                actor.getUsername(),
 
                 "DELETE WATER SCHEDULE",
 
                 "IRRIGATION",
 
-                "Water schedule deleted successfully",
+                "Deleted schedule #"
+                        + schedule.getId(),
 
                 "SUCCESS"
+
         );
 
-        repository.deleteById(id);
+        notificationService.notify(
+
+                schedule.getPlot().getFarmer(),
+
+                "Your irrigation schedule has been deleted."
+
+        );
+
+        notificationService.notify(
+
+                actor,
+
+                "You deleted irrigation schedule #"
+                        + schedule.getId()
+
+        );
 
         return ResponseEntity.ok(
+
                 "Schedule deleted successfully"
+
         );
+
     }
 
     /*

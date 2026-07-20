@@ -8,6 +8,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 import suza.irifams.audit.AuditLogger;
 import suza.irifams.enums.Role;
+import suza.irifams.notification.NotificationService;
 
 import java.util.List;
 
@@ -19,6 +20,7 @@ public class UserController {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final AuditLogger auditLogger;
+    private final NotificationService notificationService;
 
     /*
      * GET ALL USERS
@@ -61,13 +63,21 @@ public class UserController {
     @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
     @PostMapping
     public ResponseEntity<?> createUser(
-            @RequestBody User user
+
+            @RequestBody User user,
+
+            Authentication authentication
+
     ) {
 
-        if (userRepository.existsByUsername(
-                user.getUsername())) {
+        User actor = userRepository
+                .findByUsername(authentication.getName())
+                .orElseThrow();
+
+        if (userRepository.existsByUsername(user.getUsername())) {
+
             auditLogger.log(
-                    user.getUsername(),
+                    actor.getUsername(),
                     "CREATE USER",
                     "USER",
                     "Username already exists",
@@ -76,30 +86,55 @@ public class UserController {
 
             return ResponseEntity.badRequest()
                     .body("Username already exists");
-
         }
 
-
         user.setPassword(
-                passwordEncoder.encode(
-                        user.getPassword()
-                )
+                passwordEncoder.encode(user.getPassword())
         );
 
         user.setEnabled(true);
 
-        User savedUser =
-                userRepository.save(user);
+        User savedUser = userRepository.save(user);
 
         auditLogger.log(
-                savedUser.getUsername(),
+                actor.getUsername(),
                 "CREATE USER",
                 "USER",
-                "User created successfully",
+                "Created user " + savedUser.getUsername(),
                 "SUCCESS"
         );
 
+        notificationService.notify(
+                savedUser,
+                "Your IRIFAMS account has been created successfully."
+        );
+
+        notificationService.notify(
+                actor,
+                "You created account for " + savedUser.getFullName()
+        );
+
+        if(actor.getRole() == Role.SUPERVISOR){
+
+            userRepository.findByRole(Role.ADMIN)
+                    .forEach(admin ->
+
+                            notificationService.notify(
+
+                                    admin,
+
+                                    actor.getFullName()
+                                            + " created user "
+                                            + savedUser.getFullName()
+
+                            )
+
+                    );
+
+        }
+
         return ResponseEntity.ok(savedUser);
+
     }
 
 
@@ -113,68 +148,67 @@ public class UserController {
 
             @PathVariable Long id,
 
-            @RequestBody User updatedUser
+            @RequestBody User updatedUser,
+
+            Authentication authentication
 
     ) {
+
+        User actor = userRepository
+                .findByUsername(authentication.getName())
+                .orElseThrow();
 
         return userRepository.findById(id)
 
                 .map(user -> {
 
-                    user.setFullName(
-                            updatedUser.getFullName()
-                    );
+                    user.setFullName(updatedUser.getFullName());
 
-                    user.setPhone(
-                            updatedUser.getPhone()
-                    );
+                    user.setPhone(updatedUser.getPhone());
 
-                    user.setEmail(
-                            updatedUser.getEmail()
-                    );
+                    user.setEmail(updatedUser.getEmail());
 
-                    user.setGender(
-                            updatedUser.getGender()
-                    );
+                    user.setGender(updatedUser.getGender());
 
-                    user.setBlockName(
-                            updatedUser.getBlockName()
-                    );
+                    user.setBlockName(updatedUser.getBlockName());
 
-                    user.setInstitution(
-                            updatedUser.getInstitution()
-                    );
+                    user.setInstitution(updatedUser.getInstitution());
 
-                    user.setRole(
-                            updatedUser.getRole()
-                    );
+                    user.setRole(updatedUser.getRole());
 
-                    user.setImage(
-                            updatedUser.getImage()
-                    );
+                    user.setImage(updatedUser.getImage());
+
+                    User saved = userRepository.save(user);
+
                     auditLogger.log(
-                            user.getUsername(),
+                            actor.getUsername(),
                             "UPDATE USER",
                             "USER",
-                            "User updated successfully",
+                            "Updated user " + saved.getUsername(),
                             "SUCCESS"
                     );
 
-                    return ResponseEntity.ok(
-                            userRepository.save(user)
+                    notificationService.notify(
+                            saved,
+                            "Your profile information has been updated."
                     );
 
+                    notificationService.notify(
+                            actor,
+                            "You updated " + saved.getFullName()
+                    );
 
+                    return ResponseEntity.ok(saved);
 
                 })
 
                 .orElseGet(() -> {
 
                     auditLogger.log(
-                            "UNKNOWN",
+                            actor.getUsername(),
                             "UPDATE USER",
                             "USER",
-                            "Failed to update user. User not found",
+                            "User not found",
                             "FAILED"
                     );
 
@@ -191,8 +225,16 @@ public class UserController {
     @PreAuthorize("hasRole('ADMIN')")
     @DeleteMapping("/{id}")
     public ResponseEntity<?> deleteUser(
-            @PathVariable Long id
+
+            @PathVariable Long id,
+
+            Authentication authentication
+
     ) {
+
+        User actor = userRepository
+                .findByUsername(authentication.getName())
+                .orElseThrow();
 
         User user = userRepository
                 .findById(id)
@@ -201,10 +243,10 @@ public class UserController {
         if (user == null) {
 
             auditLogger.log(
-                    "UNKNOWN",
+                    actor.getUsername(),
                     "DELETE USER",
                     "USER",
-                    "Failed to delete user. User not found",
+                    "User not found",
                     "FAILED"
             );
 
@@ -212,18 +254,22 @@ public class UserController {
         }
 
         auditLogger.log(
-                user.getUsername(),
+                actor.getUsername(),
                 "DELETE USER",
                 "USER",
-                "User deleted successfully",
+                "Deleted user " + user.getUsername(),
                 "SUCCESS"
         );
 
-        userRepository.deleteById(id);
-
-        return ResponseEntity.ok(
-                "User deleted successfully"
+        notificationService.notify(
+                actor,
+                "You deleted account for " + user.getFullName()
         );
+
+        userRepository.delete(user);
+
+        return ResponseEntity.ok("User deleted successfully");
+
     }
 
 
@@ -233,24 +279,52 @@ public class UserController {
 
     @PatchMapping("/{id}/status")
     public ResponseEntity<?> toggleStatus(
-            @PathVariable Long id
+
+            @PathVariable Long id,
+
+            Authentication authentication
+
     ) {
+
+        User actor = userRepository
+                .findByUsername(authentication.getName())
+                .orElseThrow();
 
         return userRepository.findById(id)
 
                 .map(user -> {
 
-                    user.setEnabled(
-                            !user.isEnabled()
-                    );
+                    user.setEnabled(!user.isEnabled());
 
                     userRepository.save(user);
+
                     auditLogger.log(
-                            user.getUsername(),
+                            actor.getUsername(),
                             "STATUS CHANGED",
                             "USER",
-                            "User account status changed",
+                            "Changed status for " + user.getUsername(),
                             "SUCCESS"
+                    );
+
+                    notificationService.notify(
+
+                            user,
+
+                            user.isEnabled()
+
+                                    ? "Your account has been activated."
+
+                                    : "Your account has been deactivated."
+
+                    );
+
+                    notificationService.notify(
+
+                            actor,
+
+                            "You changed account status for "
+                                    + user.getFullName()
+
                     );
 
                     return ResponseEntity.ok(user);
@@ -260,10 +334,10 @@ public class UserController {
                 .orElseGet(() -> {
 
                     auditLogger.log(
-                            "UNKNOWN",
+                            actor.getUsername(),
                             "STATUS CHANGED",
                             "USER",
-                            "Failed to change user status",
+                            "User not found",
                             "FAILED"
                     );
 
@@ -348,14 +422,20 @@ public class UserController {
     ){
 
         User user = userRepository
-
                 .findByUsername(authentication.getName())
-
                 .orElseThrow();
 
         if(!passwordEncoder.matches(
                 request.getCurrentPassword(),
                 user.getPassword())){
+
+            auditLogger.log(
+                    user.getUsername(),
+                    "CHANGE PASSWORD",
+                    "USER",
+                    "Incorrect current password",
+                    "FAILED"
+            );
 
             return ResponseEntity.badRequest()
                     .body("Current password is incorrect");
@@ -363,27 +443,24 @@ public class UserController {
         }
 
         user.setPassword(
-
-                passwordEncoder.encode(
-                        request.getNewPassword()
-                )
-
+                passwordEncoder.encode(request.getNewPassword())
         );
+
+        user.setTemporaryPassword(false);
 
         userRepository.save(user);
 
         auditLogger.log(
-
                 user.getUsername(),
-
                 "CHANGE PASSWORD",
-
                 "USER",
-
                 "Password changed successfully",
-
                 "SUCCESS"
+        );
 
+        notificationService.notify(
+                user,
+                "Your account password has been changed successfully."
         );
 
         return ResponseEntity.ok(

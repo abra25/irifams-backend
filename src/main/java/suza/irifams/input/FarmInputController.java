@@ -5,6 +5,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import suza.irifams.audit.AuditLogger;
+import suza.irifams.enums.Role;
+import suza.irifams.notification.NotificationService;
 import suza.irifams.user.User;
 import suza.irifams.user.UserRepository;
 
@@ -20,6 +22,7 @@ public class FarmInputController {
     private final InputDistributionRepository distributionRepository;
     private final UserRepository userRepository;
     private final AuditLogger auditLogger;
+    private final NotificationService notificationService;
 
     /*
      * ALL INPUTS
@@ -36,24 +39,66 @@ public class FarmInputController {
      * ADD INPUT
      */
 
-    @PreAuthorize(
-            "hasAnyRole('ADMIN','SUPERVISOR')")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
     @PostMapping
     public FarmInput addInput(
-            @RequestBody FarmInput input
-    ) {
+
+            @RequestBody FarmInput input,
+
+            Authentication authentication
+
+    ){
+
+        User actor = userRepository
+
+                .findByUsername(authentication.getName())
+
+                .orElseThrow();
 
         FarmInput saved =
                 inputRepository.save(input);
 
         auditLogger.log(
-                "ADMIN",
+
+                actor.getUsername(),
+
                 "ADD INPUT",
+
                 "INPUT",
-                "Added input "
-                        + saved.getName(),
+
+                "Added farm input " + saved.getName(),
+
                 "SUCCESS"
+
         );
+
+        notificationService.notify(
+
+                actor,
+
+                "You added a new farm input: "
+                        + saved.getName()
+
+        );
+
+        userRepository.findByRole(Role.ADMIN)
+
+                .stream()
+
+                .filter(admin -> !admin.getId().equals(actor.getId()))
+
+                .forEach(admin ->
+
+                        notificationService.notify(
+
+                                admin,
+
+                                "New farm input added: "
+                                        + saved.getName()
+
+                        )
+
+                );
 
         return saved;
     }
@@ -62,20 +107,26 @@ public class FarmInputController {
      * UPDATE INPUT
      */
 
-    @PreAuthorize(
-            "hasAnyRole('ADMIN','SUPERVISOR')")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
     @PutMapping("/{id}")
     public ResponseEntity<?> updateInput(
 
             @PathVariable Long id,
 
-            @RequestBody FarmInput updated
+            @RequestBody FarmInput updated,
 
-    ) {
+            Authentication authentication
 
+    ){
         return inputRepository.findById(id)
 
                 .map(input -> {
+
+                    User actor = userRepository
+
+                            .findByUsername(authentication.getName())
+
+                            .orElseThrow();
 
                     input.setName(updated.getName());
                     input.setCategory(updated.getCategory());
@@ -84,24 +135,55 @@ public class FarmInputController {
                     input.setSeason(updated.getSeason());
                     input.setImage(updated.getImage());
                     input.setStatus(updated.getStatus());
+
+                    inputRepository.save(input);
+
                     auditLogger.log(
-                            "ADMIN",
+
+                            actor.getUsername(),
+
                             "UPDATE INPUT",
+
                             "INPUT",
-                            "Updated input "
-                                    + input.getName(),
+
+                            "Updated input " + input.getName(),
+
                             "SUCCESS"
+
                     );
 
-                    return ResponseEntity.ok(
-                            inputRepository.save(input)
+                    notificationService.notify(
+
+                            actor,
+
+                            "You updated farm input "
+                                    + input.getName()
+
                     );
+
+                    return ResponseEntity.ok(input);
 
                 })
 
-                .orElse(
-                        ResponseEntity.notFound().build()
-                );
+                .orElseGet(() -> {
+
+                    auditLogger.log(
+
+                            "UNKNOWN",
+
+                            "UPDATE INPUT",
+
+                            "INPUT",
+
+                            "Input not found",
+
+                            "FAILED"
+
+                    );
+
+                    return ResponseEntity.notFound().build();
+
+                });
 
     }
 
@@ -111,37 +193,74 @@ public class FarmInputController {
 
     @PreAuthorize("hasRole('ADMIN')")
     @DeleteMapping("/{id}")
-    public void deleteInput(
-            @PathVariable Long id
-    ) {
-        FarmInput input =
-                inputRepository.findById(id)
-                        .orElse(null);
+    public ResponseEntity<?> deleteInput(
+
+            @PathVariable Long id,
+
+            Authentication authentication
+
+    ){
+
+        User actor = userRepository
+
+                .findByUsername(authentication.getName())
+
+                .orElseThrow();
+
+        FarmInput input = inputRepository
+
+                .findById(id)
+
+                .orElse(null);
 
         if(input == null){
 
             auditLogger.log(
-                    "UNKNOWN",
+
+                    actor.getUsername(),
+
                     "DELETE INPUT",
+
                     "INPUT",
-                    "Failed to delete input",
+
+                    "Input not found",
+
                     "FAILED"
+
             );
 
-            return;
+            return ResponseEntity.notFound().build();
+
         }
 
+        inputRepository.delete(input);
+
         auditLogger.log(
-                "ADMIN",
+
+                actor.getUsername(),
+
                 "DELETE INPUT",
+
                 "INPUT",
-                "Deleted input "
-                        + input.getName(),
+
+                "Deleted input " + input.getName(),
+
                 "SUCCESS"
+
         );
 
-        inputRepository.deleteById(id);
+        notificationService.notify(
 
+                actor,
+
+                "You deleted farm input "
+                        + input.getName()
+
+        );
+
+        return ResponseEntity.ok(
+                "Input deleted successfully"
+        );
     }
 
     /*
@@ -238,17 +357,67 @@ public class FarmInputController {
         distributionRepository.save(distribution);
 
         auditLogger.log(
-                farmer.getUsername(),
+
+                supervisor.getUsername(),
+
                 "INPUT DISTRIBUTION",
+
                 "INPUT",
+
                 quantity + " " +
                         input.getUnit() +
                         " of " +
                         input.getName() +
-                        " distributed",
+                        " distributed to "
+                        + farmer.getFullName(),
+
                 "SUCCESS"
+
         );
 
+// Farmer
+        notificationService.notify(
+
+                farmer,
+
+                "You have received "
+                        + quantity + " "
+                        + input.getUnit()
+                        + " of "
+                        + input.getName()
+
+        );
+
+// Supervisor
+        notificationService.notify(
+
+                supervisor,
+
+                "You distributed "
+                        + input.getName()
+                        + " to "
+                        + farmer.getFullName()
+
+        );
+
+// Admins
+        userRepository.findByRole(Role.ADMIN)
+
+                .forEach(admin ->
+
+                        notificationService.notify(
+
+                                admin,
+
+                                supervisor.getFullName()
+                                        + " distributed "
+                                        + input.getName()
+                                        + " to "
+                                        + farmer.getFullName()
+
+                        )
+
+                );
         return ResponseEntity.ok(
                 java.util.Map.of(
                         "message",

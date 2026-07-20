@@ -4,6 +4,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import suza.irifams.audit.AuditLogger;
+import suza.irifams.enums.Role;
+import suza.irifams.notification.NotificationService;
 import suza.irifams.user.User;
 import suza.irifams.user.UserRepository;
 import org.springframework.security.core.Authentication;
@@ -19,6 +21,7 @@ public class PlotController {
     private final PlotRepository plotRepository;
     private final UserRepository userRepository;
     private final AuditLogger auditLogger;
+    private final NotificationService notificationService;
 
     /*
      * GET ALL PLOTS
@@ -65,67 +68,120 @@ public class PlotController {
 
     ) {
 
-        if (plotRepository.existsByPlotNo(
-                plot.getPlotNo())) {
+        User actor = userRepository
+
+                .findByUsername(authentication.getName())
+
+                .orElseThrow();
+
+        if (plotRepository.existsByPlotNo(plot.getPlotNo())) {
 
             auditLogger.log(
-                    "UNKNOWN",
+
+                    actor.getUsername(),
+
                     "CREATE PLOT",
+
                     "PLOT",
-                    "Failed to create plot. Plot number already exists",
+
+                    "Plot number already exists",
+
                     "FAILED"
+
             );
 
             return ResponseEntity.badRequest()
+
                     .body("Plot Number already exists");
         }
 
-        User farmer =
-                userRepository.findById(farmerId)
-                        .orElse(null);
+        User farmer = userRepository
 
-        if(farmer == null){
+                .findById(farmerId)
+
+                .orElse(null);
+
+        if (farmer == null) {
 
             auditLogger.log(
-                    "UNKNOWN",
+
+                    actor.getUsername(),
+
                     "CREATE PLOT",
+
                     "PLOT",
+
                     "Farmer not found",
+
                     "FAILED"
+
             );
 
             return ResponseEntity.badRequest()
+
                     .body("Farmer not found");
         }
 
-        String username =
-                authentication.getName();
-
-        User supervisor =
-                userRepository.findByUsername(username)
-                        .orElseThrow();
-
-        // block automatic
-        plot.setBlock(
-                supervisor.getBlockName()
-        );
+        plot.setBlock(actor.getBlockName());
 
         plot.setFarmer(farmer);
 
-        Plot savedPlot =
-                plotRepository.save(plot);
+        Plot savedPlot = plotRepository.save(plot);
 
         auditLogger.log(
-                farmer.getUsername(),
+
+                actor.getUsername(),
+
                 "CREATE PLOT",
+
                 "PLOT",
-                "Plot "
-                        + savedPlot.getPlotNo()
-                        + " created successfully",
+
+                "Created plot " + savedPlot.getPlotNo(),
+
                 "SUCCESS"
+
         );
 
+        notificationService.notify(
+
+                farmer,
+
+                "A new plot (" + savedPlot.getPlotNo() + ") has been assigned to your account."
+
+        );
+
+        notificationService.notify(
+
+                actor,
+
+                "You successfully created Plot " + savedPlot.getPlotNo()
+
+        );
+
+        userRepository.findByRole(Role.ADMIN)
+
+                .stream()
+
+                .filter(admin -> !admin.getId().equals(actor.getId()))
+
+                .forEach(admin ->
+
+                        notificationService.notify(
+
+                                admin,
+
+                                actor.getFullName()
+
+                                        + " created Plot "
+
+                                        + savedPlot.getPlotNo()
+
+                        )
+
+                );
+
         return ResponseEntity.ok(savedPlot);
+
     }
 
     /*
@@ -173,67 +229,93 @@ public class PlotController {
 
             @PathVariable Long id,
 
-            @RequestBody Plot updatedPlot
+            @RequestBody Plot updatedPlot,
 
-    ) {
+            Authentication authentication
+
+    ){
+
+        User actor = userRepository
+
+                .findByUsername(authentication.getName())
+
+                .orElseThrow();
 
         return plotRepository.findById(id)
 
                 .map(plot -> {
 
-                    // block haisogezwi
+                    plot.setSize(updatedPlot.getSize());
 
-                    plot.setSize(
-                            updatedPlot.getSize());
+                    plot.setSoilType(updatedPlot.getSoilType());
 
-                    plot.setSoilType(
-                            updatedPlot.getSoilType());
+                    plot.setLocationDescription(updatedPlot.getLocationDescription());
 
-                    plot.setLocationDescription(
-                            updatedPlot.getLocationDescription());
+                    plot.setIrrigationMethod(updatedPlot.getIrrigationMethod());
 
-                    plot.setIrrigationMethod(
-                            updatedPlot.getIrrigationMethod());
+                    plot.setSeason(updatedPlot.getSeason());
 
-                    plot.setSeason(
-                            updatedPlot.getSeason());
+                    plot.setStatus(updatedPlot.getStatus());
 
-                    plot.setStatus(
-                            updatedPlot.getStatus());
+                    plotRepository.save(plot);
 
                     auditLogger.log(
-                            plot.getFarmer()
-                                    .getUsername(),
+
+                            actor.getUsername(),
 
                             "UPDATE PLOT",
 
                             "PLOT",
 
-                            "Plot "
-                                    + plot.getPlotNo()
-                                    + " updated successfully",
+                            "Updated Plot " + plot.getPlotNo(),
 
                             "SUCCESS"
+
                     );
 
-                    return ResponseEntity.ok(
-                            plotRepository.save(plot)
+                    notificationService.notify(
+
+                            plot.getFarmer(),
+
+                            "Your plot "
+
+                                    + plot.getPlotNo()
+
+                                    + " information has been updated."
+
                     );
+
+                    notificationService.notify(
+
+                            actor,
+
+                            "You updated Plot "
+
+                                    + plot.getPlotNo()
+
+                    );
+
+                    return ResponseEntity.ok(plot);
 
                 })
 
                 .orElseGet(() -> {
 
                     auditLogger.log(
-                            "UNKNOWN",
+
+                            actor.getUsername(),
+
                             "UPDATE PLOT",
+
                             "PLOT",
-                            "Failed to update plot",
+
+                            "Plot not found",
+
                             "FAILED"
+
                     );
 
-                    return ResponseEntity.notFound()
-                            .build();
+                    return ResponseEntity.notFound().build();
 
                 });
 
@@ -245,46 +327,89 @@ public class PlotController {
     @PreAuthorize("hasRole('ADMIN')")
     @DeleteMapping("/{id}")
     public ResponseEntity<?> deletePlot(
-            @PathVariable Long id
-    ) {
 
-        if (!plotRepository.existsById(id)) {
+            @PathVariable Long id,
 
-            return ResponseEntity.notFound().build();
+            Authentication authentication
 
-        }
+    ){
 
-        Plot plot =
-                plotRepository.findById(id)
-                        .orElse(null);
+        User actor = userRepository
+
+                .findByUsername(authentication.getName())
+
+                .orElseThrow();
+
+        Plot plot = plotRepository
+
+                .findById(id)
+
+                .orElse(null);
 
         if(plot == null){
 
             auditLogger.log(
-                    "UNKNOWN",
+
+                    actor.getUsername(),
+
                     "DELETE PLOT",
+
                     "PLOT",
-                    "Failed to delete plot. Plot not found",
+
+                    "Plot not found",
+
                     "FAILED"
+
             );
 
             return ResponseEntity.notFound().build();
+
         }
 
+        plotRepository.delete(plot);
+
         auditLogger.log(
-                plot.getFarmer().getUsername(),
+
+                actor.getUsername(),
+
                 "DELETE PLOT",
+
                 "PLOT",
-                "Plot "
-                        + plot.getPlotNo()
-                        + " deleted successfully",
+
+                "Deleted Plot " + plot.getPlotNo(),
+
                 "SUCCESS"
+
         );
 
-        plotRepository.deleteById(id);
+        notificationService.notify(
+
+                plot.getFarmer(),
+
+                "Plot "
+
+                        + plot.getPlotNo()
+
+                        + " has been removed from your account."
+
+        );
+
+        notificationService.notify(
+
+                actor,
+
+                "You deleted Plot "
+
+                        + plot.getPlotNo()
+
+        );
 
         return ResponseEntity.ok(
-                "Plot deleted successfully");
+
+                "Plot deleted successfully"
+
+        );
+
     }
 
 

@@ -16,4 +16,6 @@ public interface NotificationRepository
     List<Notification>
     findTop5ByUserIdOrderByCreatedAtDesc(Long userId);
 
+    void deleteById(Long id);
+
 }

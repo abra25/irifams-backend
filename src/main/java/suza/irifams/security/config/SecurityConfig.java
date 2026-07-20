@@ -3,6 +3,7 @@ package suza.irifams.security.config;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.*;
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
 import org.springframework.security.config.annotation.authentication.configuration.
         AuthenticationConfiguration;
 
@@ -23,6 +24,7 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.
         UsernamePasswordAuthenticationFilter;
 
+import suza.irifams.security.service.CustomUserDetailsService;
 import suza.irifams.security.service.JwtAuthenticationFilter;
 
 @Configuration
@@ -31,6 +33,7 @@ import suza.irifams.security.service.JwtAuthenticationFilter;
 public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtFilter;
+    private final CustomUserDetailsService customUserDetailsService;
 
     @Bean
     public PasswordEncoder passwordEncoder() {
@@ -50,7 +53,8 @@ public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain securityFilterChain(
-            HttpSecurity http) throws Exception {
+            HttpSecurity http
+    ) throws Exception {
 
         http
 
@@ -60,8 +64,18 @@ public class SecurityConfig {
 
                 .sessionManagement(session ->
                         session.sessionCreationPolicy(
-                                SessionCreationPolicy.STATELESS))
+                                SessionCreationPolicy.STATELESS
+                        )
+                )
 
+                // Authentication Provider
+                .authenticationProvider(
+                        authenticationProvider(
+                                customUserDetailsService
+                        )
+                )
+
+                // Authorization
                 .authorizeHttpRequests(auth -> auth
 
                         .requestMatchers(
@@ -74,6 +88,7 @@ public class SecurityConfig {
 
                         .anyRequest()
                         .authenticated()
+
                 )
 
                 .addFilterBefore(
@@ -82,6 +97,26 @@ public class SecurityConfig {
                 );
 
         return http.build();
+    }
+
+    @Bean
+    public DaoAuthenticationProvider authenticationProvider(
+            CustomUserDetailsService userDetailsService
+    ){
+
+        DaoAuthenticationProvider provider =
+                new DaoAuthenticationProvider();
+
+        provider.setUserDetailsService(
+                userDetailsService
+        );
+
+        provider.setPasswordEncoder(
+                passwordEncoder()
+        );
+
+        return provider;
+
     }
 
 }

@@ -70,4 +70,41 @@ public class NotificationController {
                 );
     }
 
+    @DeleteMapping("/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<?> deleteNotification(
+            @PathVariable Long id,
+            Authentication authentication
+    ){
+
+        User user = userRepository
+                .findByUsername(authentication.getName())
+                .orElseThrow();
+
+        Notification notification = repository
+                .findById(id)
+                .orElse(null);
+
+        if(notification == null){
+
+            return ResponseEntity.notFound().build();
+
+        }
+
+        // user afute notification yake tu
+
+        if(!notification.getUser().getId().equals(user.getId())){
+
+            return ResponseEntity.status(403).build();
+
+        }
+
+        repository.delete(notification);
+
+        return ResponseEntity.ok(
+                "Notification deleted successfully"
+        );
+
+    }
+
 }
