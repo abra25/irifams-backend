@@ -5,8 +5,9 @@ import lombok.Setter;
 
 @Getter
 @Setter
-public class ForgotPasswordRequest {
+public class VerifyOtpRequest {
 
     private String username;
 
+    private String otp;
 }

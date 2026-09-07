@@ -14,9 +14,10 @@ public interface ServiceRequestRepository
     long countByStatus(RequestStatus status);
 
     long countByServiceType(ServiceType serviceType);
+
     List<ServiceRequest> findByPlotBlock(String block);
-    List<ServiceRequest>
-    findByPlotBlockOrderByCreatedAtDesc(
+
+    List<ServiceRequest> findByPlotBlockOrderByCreatedAtDesc(
             String block
     );
 
@@ -25,8 +26,7 @@ public interface ServiceRequestRepository
             RequestStatus status
     );
 
-    List<ServiceRequest>
-    findTop5ByPlot_BlockOrderByCreatedAtDesc(
+    List<ServiceRequest> findTop5ByPlot_BlockOrderByCreatedAtDesc(
             String block
     );
 
@@ -35,10 +35,7 @@ public interface ServiceRequestRepository
             RequestStatus status
     );
 
-    List<ServiceRequest>
-    findTop5ByPlot_Farmer_IdOrderByCreatedAtDesc(
+    List<ServiceRequest> findTop5ByPlot_Farmer_IdOrderByCreatedAtDesc(
             Long farmerId
     );
-
-
 }

@@ -5,8 +5,11 @@ import lombok.Setter;
 
 @Getter
 @Setter
-public class ForgotPasswordRequest {
+public class ResetPasswordRequest {
 
     private String username;
 
+    private String recoveryToken;
+
+    private String newPassword;
 }

@@ -43,15 +43,14 @@ public class ServiceRequest {
     private RequestStatus status;
 
     // Farmer
-
     @ManyToOne
     @JoinColumn(name = "farmer_id")
     private User farmer;
 
     // Plot
-
     @ManyToOne
     @JoinColumn(name = "plot_id")
     private Plot plot;
 
+    private Double quantity;
 }

@@ -3,6 +3,7 @@ package suza.irifams.dashboard;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+
 import suza.irifams.audit.AuditLog;
 import suza.irifams.audit.AuditLogRepository;
 import suza.irifams.enums.PaymentStatus;
@@ -12,17 +13,16 @@ import suza.irifams.enums.ServiceType;
 import suza.irifams.input.FarmInputRepository;
 import suza.irifams.notification.Notification;
 import suza.irifams.notification.NotificationRepository;
+import suza.irifams.payment.Payment;
 import suza.irifams.payment.PaymentRepository;
 import suza.irifams.plot.PlotRepository;
+import suza.irifams.request.ServiceRequest;
 import suza.irifams.request.ServiceRequestRepository;
 import suza.irifams.user.User;
 import suza.irifams.user.UserRepository;
 import suza.irifams.water.WaterSchedule;
 import suza.irifams.water.WaterScheduleRepository;
 import org.springframework.security.core.Authentication;
-import suza.irifams.payment.Payment;
-import suza.irifams.request.ServiceRequest;
-
 
 import java.util.List;
 
@@ -40,23 +40,28 @@ public class DashboardController {
     private final AuditLogRepository auditRepository;
     private final NotificationRepository notificationRepository;
 
+
+    // =========================================================
+    // GENERAL DASHBOARD STATISTICS
+    // ADMIN + SUPERVISOR
+    // =========================================================
+
     @GetMapping("/stats")
-    @PreAuthorize(
-            "hasAnyRole('ADMIN','SUPERVISOR','STAKEHOLDER')")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
     public DashboardStatsDto getStatistics() {
 
         return DashboardStatsDto.builder()
 
                 .totalFarmers(
-                        userRepository.countByRole(Role.FARMER)
+                        userRepository.countByRole(
+                                Role.FARMER
+                        )
                 )
 
                 .totalSupervisors(
-                        userRepository.countByRole(Role.SUPERVISOR)
-                )
-
-                .totalStakeholders(
-                        userRepository.countByRole(Role.STAKEHOLDER)
+                        userRepository.countByRole(
+                                Role.SUPERVISOR
+                        )
                 )
 
                 .totalPlots(
@@ -100,22 +105,33 @@ public class DashboardController {
                 .build();
     }
 
+
+    // =========================================================
+    // DASHBOARD CHARTS
+    // ADMIN + SUPERVISOR
+    // =========================================================
+
     @GetMapping("/charts")
-    @PreAuthorize(
-            "hasAnyRole('ADMIN','SUPERVISOR','STAKEHOLDER')")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
     public ChartDataDto getChartData() {
 
         return ChartDataDto.builder()
 
+                /*
+                 * Land preparation / Kuburugiwa
+                 */
                 .tractorRequests(
                         requestRepository.countByServiceType(
-                                ServiceType.TRACTOR_SERVICE
+                                ServiceType.KUBURUGIWA
                         )
                 )
 
+                /*
+                 * Harvesting / Kuvuna
+                 */
                 .harvestingRequests(
                         requestRepository.countByServiceType(
-                                ServiceType.HARVESTING_SERVICE
+                                ServiceType.KUVUNA
                         )
                 )
 
@@ -134,50 +150,70 @@ public class DashboardController {
                 .build();
     }
 
+
+    // =========================================================
+    // RECENT USERS
+    // ADMIN + SUPERVISOR
+    // =========================================================
+
     @GetMapping("/recent-users")
-    @PreAuthorize(
-            "hasAnyRole('ADMIN','SUPERVISOR','STAKEHOLDER')")
-    public List<User> recentUsers(){
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
+    public List<User> recentUsers() {
 
         return userRepository
                 .findTop5ByOrderByIdDesc();
-
     }
 
+
+    // =========================================================
+    // RECENT ACTIVITIES
+    // ADMIN + SUPERVISOR
+    // =========================================================
+
     @GetMapping("/activities")
-    @PreAuthorize(
-            "hasAnyRole('ADMIN','SUPERVISOR','STAKEHOLDER')")
-    public List<AuditLog> recentActivities(){
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
+    public List<AuditLog> recentActivities() {
 
         return auditRepository
                 .findTop5ByOrderByCreatedAtDesc();
-
     }
 
+
+    // =========================================================
+    // RECENT NOTIFICATIONS
+    // ADMIN + SUPERVISOR
+    // =========================================================
+
     @GetMapping("/notifications")
-    @PreAuthorize(
-            "hasAnyRole('ADMIN','SUPERVISOR','STAKEHOLDER')")
-    public List<Notification> recentNotifications(){
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
+    public List<Notification> recentNotifications() {
 
         return notificationRepository
                 .findTop5ByOrderByCreatedAtDesc();
-
     }
+
+
+    // =========================================================
+    // SUPERVISOR DASHBOARD STATISTICS
+    // =========================================================
 
     @PreAuthorize("hasRole('SUPERVISOR')")
     @GetMapping("/supervisor/stats")
     public DashboardStatsDto getSupervisorStats(
             Authentication authentication
-    ){
+    ) {
 
         String username =
                 authentication.getName();
 
-        User supervisor = userRepository
-                .findByUsername(username)
-                .orElseThrow();
+        User supervisor =
+                userRepository
+                        .findByUsername(username)
+                        .orElseThrow();
 
-        String block = supervisor.getBlockName();
+        String block =
+                supervisor.getBlockName();
+
 
         return DashboardStatsDto.builder()
 
@@ -210,18 +246,25 @@ public class DashboardController {
                 .build();
     }
 
+
+    // =========================================================
+    // SUPERVISOR RECENT REQUESTS
+    // =========================================================
+
     @PreAuthorize("hasRole('SUPERVISOR')")
     @GetMapping("/supervisor/recent-requests")
     public List<ServiceRequest> recentSupervisorRequests(
             Authentication authentication
-    ){
+    ) {
 
         String username =
                 authentication.getName();
 
-        User supervisor = userRepository
-                .findByUsername(username)
-                .orElseThrow();
+        User supervisor =
+                userRepository
+                        .findByUsername(username)
+                        .orElseThrow();
+
 
         return requestRepository
                 .findTop5ByPlot_BlockOrderByCreatedAtDesc(
@@ -229,18 +272,25 @@ public class DashboardController {
                 );
     }
 
+
+    // =========================================================
+    // SUPERVISOR PENDING PAYMENTS
+    // =========================================================
+
     @PreAuthorize("hasRole('SUPERVISOR')")
     @GetMapping("/supervisor/payments")
     public List<Payment> supervisorPayments(
             Authentication authentication
-    ){
+    ) {
 
         String username =
                 authentication.getName();
 
-        User supervisor = userRepository
-                .findByUsername(username)
-                .orElseThrow();
+        User supervisor =
+                userRepository
+                        .findByUsername(username)
+                        .orElseThrow();
+
 
         return paymentRepository
                 .findTop5ByServiceRequest_Plot_BlockAndStatusOrderByPaymentDateDesc(
@@ -249,18 +299,25 @@ public class DashboardController {
                 );
     }
 
+
+    // =========================================================
+    // SUPERVISOR NOTIFICATIONS
+    // =========================================================
+
     @PreAuthorize("hasRole('SUPERVISOR')")
     @GetMapping("/supervisor/notifications")
     public List<Notification> supervisorNotifications(
             Authentication authentication
-    ){
+    ) {
 
         String username =
                 authentication.getName();
 
-        User supervisor = userRepository
-                .findByUsername(username)
-                .orElseThrow();
+        User supervisor =
+                userRepository
+                        .findByUsername(username)
+                        .orElseThrow();
+
 
         return notificationRepository
                 .findTop5ByUserIdOrderByCreatedAtDesc(
@@ -268,24 +325,35 @@ public class DashboardController {
                 );
     }
 
+
+    // =========================================================
+    // FARMER DASHBOARD STATISTICS
+    // =========================================================
+
     @PreAuthorize("hasRole('FARMER')")
     @GetMapping("/farmer/stats")
     public DashboardStatsDto farmerStats(
             Authentication authentication
-    ){
+    ) {
 
-        User farmer = userRepository
-                .findByUsername(authentication.getName())
-                .orElseThrow();
+        User farmer =
+                userRepository
+                        .findByUsername(
+                                authentication.getName()
+                        )
+                        .orElseThrow();
+
 
         Double pendingAmount =
                 paymentRepository.sumPendingAmount(
                         farmer.getId()
                 );
 
+
         if (pendingAmount == null) {
             pendingAmount = 0.0;
         }
+
 
         return DashboardStatsDto.builder()
 
@@ -296,17 +364,19 @@ public class DashboardController {
                 )
 
                 .pendingRequests(
-                        requestRepository.countByPlot_Farmer_IdAndStatus(
-                                farmer.getId(),
-                                RequestStatus.PENDING
-                        )
+                        requestRepository
+                                .countByPlot_Farmer_IdAndStatus(
+                                        farmer.getId(),
+                                        RequestStatus.PENDING
+                                )
                 )
 
                 .completedRequests(
-                        requestRepository.countByPlot_Farmer_IdAndStatus(
-                                farmer.getId(),
-                                RequestStatus.COMPLETED
-                        )
+                        requestRepository
+                                .countByPlot_Farmer_IdAndStatus(
+                                        farmer.getId(),
+                                        RequestStatus.COMPLETED
+                                )
                 )
 
                 .outstandingPayments(
@@ -314,18 +384,26 @@ public class DashboardController {
                 )
 
                 .build();
-
     }
+
+
+    // =========================================================
+    // FARMER RECENT REQUESTS
+    // =========================================================
 
     @PreAuthorize("hasRole('FARMER')")
     @GetMapping("/farmer/requests")
     public List<ServiceRequest> farmerRequests(
             Authentication authentication
-    ){
+    ) {
 
-        User farmer = userRepository
-                .findByUsername(authentication.getName())
-                .orElseThrow();
+        User farmer =
+                userRepository
+                        .findByUsername(
+                                authentication.getName()
+                        )
+                        .orElseThrow();
+
 
         return requestRepository
                 .findTop5ByPlot_Farmer_IdOrderByCreatedAtDesc(
@@ -333,15 +411,24 @@ public class DashboardController {
                 );
     }
 
+
+    // =========================================================
+    // FARMER WATER SCHEDULES
+    // =========================================================
+
     @PreAuthorize("hasRole('FARMER')")
     @GetMapping("/farmer/schedules")
     public List<WaterSchedule> farmerSchedules(
             Authentication authentication
-    ){
+    ) {
 
-        User farmer = userRepository
-                .findByUsername(authentication.getName())
-                .orElseThrow();
+        User farmer =
+                userRepository
+                        .findByUsername(
+                                authentication.getName()
+                        )
+                        .orElseThrow();
+
 
         return waterRepository
                 .findTop5ByPlot_Farmer_IdOrderByIrrigationDateAsc(
@@ -349,15 +436,24 @@ public class DashboardController {
                 );
     }
 
+
+    // =========================================================
+    // FARMER NOTIFICATIONS
+    // =========================================================
+
     @PreAuthorize("hasRole('FARMER')")
     @GetMapping("/farmer/notifications")
     public List<Notification> farmerNotifications(
             Authentication authentication
-    ){
+    ) {
 
-        User farmer = userRepository
-                .findByUsername(authentication.getName())
-                .orElseThrow();
+        User farmer =
+                userRepository
+                        .findByUsername(
+                                authentication.getName()
+                        )
+                        .orElseThrow();
+
 
         return notificationRepository
                 .findTop5ByUserIdOrderByCreatedAtDesc(

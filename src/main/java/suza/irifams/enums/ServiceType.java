@@ -2,8 +2,13 @@ package suza.irifams.enums;
 
 public enum ServiceType {
 
-    TRACTOR_SERVICE,
-
-    HARVESTING_SERVICE
-
+    KUBURUGIWA,
+    KUCHIMBA,
+    KUVUNA,
+    DAWA_CHUPA,
+    DAWA_VIFUKO_KUBWA,
+    DAWA_VIFUKO_NDOGO,
+    KUTILIWA_DAWA,
+    MBOLEA,
+    MBEGU_MPUNGA
 }

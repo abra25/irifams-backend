@@ -14,11 +14,12 @@ public interface PaymentRepository
     List<Payment> findByFarmerId(Long farmerId);
 
     Optional<Payment> findByControlNumber(String controlNumber);
+
     @Query("""
-       SELECT COALESCE(SUM(p.amount),0)
-       FROM Payment p
-       WHERE p.status='PAID'
-       """)
+        SELECT COALESCE(SUM(p.amount),0)
+        FROM Payment p
+        WHERE p.status='PAID'
+        """)
     Double getTotalRevenue();
 
     long countByStatus(PaymentStatus status);
@@ -40,20 +41,13 @@ public interface PaymentRepository
     );
 
     @Query("""
-
-SELECT COALESCE(SUM(p.amount),0)
-
-FROM Payment p
-
-WHERE p.serviceRequest.plot.farmer.id = :farmerId
-
-AND p.status='PENDING'
-
-""")
+        SELECT COALESCE(SUM(p.amount),0)
+        FROM Payment p
+        WHERE p.serviceRequest.plot.farmer.id = :farmerId
+        AND p.status='PENDING'
+        """)
     Double sumPendingAmount(
             @Param("farmerId")
             Long farmerId
     );
-
-
 }

@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import suza.irifams.audit.AuditLogger;
+import suza.irifams.email.EmailService;
 import suza.irifams.enums.Role;
 import suza.irifams.notification.NotificationService;
 import suza.irifams.user.User;
@@ -22,22 +23,30 @@ public class PlotController {
     private final UserRepository userRepository;
     private final AuditLogger auditLogger;
     private final NotificationService notificationService;
+    private final EmailService emailService;
+
 
     /*
+     * =========================================================
      * GET ALL PLOTS
+     * =========================================================
      */
-    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR','STAKEHOLDER')")
+
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
     @GetMapping
     public List<Plot> getAllPlots() {
 
         return plotRepository.findAll();
-
     }
 
+
     /*
+     * =========================================================
      * GET PLOT BY ID
+     * =========================================================
      */
-    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR','STAKEHOLDER','FARMER')")
+
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR','FARMER')")
     @GetMapping("/{id}")
     public ResponseEntity<?> getPlot(
             @PathVariable Long id
@@ -50,12 +59,15 @@ public class PlotController {
                 .orElse(
                         ResponseEntity.notFound().build()
                 );
-
     }
 
+
     /*
+     * =========================================================
      * CREATE NEW PLOT
+     * =========================================================
      */
+
     @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
     @PostMapping
     public ResponseEntity<?> addPlot(
@@ -68,13 +80,27 @@ public class PlotController {
 
     ) {
 
-        User actor = userRepository
+        User actor =
+                userRepository
 
-                .findByUsername(authentication.getName())
+                        .findByUsername(
+                                authentication.getName()
+                        )
 
-                .orElseThrow();
+                        .orElseThrow();
 
-        if (plotRepository.existsByPlotNo(plot.getPlotNo())) {
+
+        /*
+         * -----------------------------------------------------
+         * CHECK PLOT NUMBER
+         * -----------------------------------------------------
+         */
+
+        if (
+                plotRepository.existsByPlotNo(
+                        plot.getPlotNo()
+                )
+        ) {
 
             auditLogger.log(
 
@@ -87,19 +113,30 @@ public class PlotController {
                     "Plot number already exists",
 
                     "FAILED"
-
             );
+
 
             return ResponseEntity.badRequest()
 
-                    .body("Plot Number already exists");
+                    .body(
+                            "Plot Number already exists"
+                    );
         }
 
-        User farmer = userRepository
 
-                .findById(farmerId)
+        /*
+         * -----------------------------------------------------
+         * FIND FARMER
+         * -----------------------------------------------------
+         */
 
-                .orElse(null);
+        User farmer =
+                userRepository
+
+                        .findById(farmerId)
+
+                        .orElse(null);
+
 
         if (farmer == null) {
 
@@ -114,19 +151,48 @@ public class PlotController {
                     "Farmer not found",
 
                     "FAILED"
-
             );
+
 
             return ResponseEntity.badRequest()
 
-                    .body("Farmer not found");
+                    .body(
+                            "Farmer not found"
+                    );
         }
 
-        plot.setBlock(actor.getBlockName());
 
-        plot.setFarmer(farmer);
+        /*
+         * -----------------------------------------------------
+         * SET BLOCK
+         * -----------------------------------------------------
+         */
 
-        Plot savedPlot = plotRepository.save(plot);
+        plot.setBlock(
+                actor.getBlockName()
+        );
+
+
+        plot.setFarmer(
+                farmer
+        );
+
+
+        /*
+         * -----------------------------------------------------
+         * SAVE PLOT
+         * -----------------------------------------------------
+         */
+
+        Plot savedPlot =
+                plotRepository.save(plot);
+
+
+        /*
+         * -----------------------------------------------------
+         * AUDIT
+         * -----------------------------------------------------
+         */
 
         auditLogger.log(
 
@@ -136,83 +202,178 @@ public class PlotController {
 
                 "PLOT",
 
-                "Created plot " + savedPlot.getPlotNo(),
+                "Created plot "
+                        + savedPlot.getPlotNo(),
 
                 "SUCCESS"
-
         );
+
+
+        /*
+         * -----------------------------------------------------
+         * FARMER NOTIFICATION
+         * -----------------------------------------------------
+         */
 
         notificationService.notify(
 
                 farmer,
 
-                "A new plot (" + savedPlot.getPlotNo() + ") has been assigned to your account."
-
+                "A new plot ("
+                        + savedPlot.getPlotNo()
+                        + ") has been assigned to your account."
         );
+
+
+        /*
+         * -----------------------------------------------------
+         * ACTOR NOTIFICATION
+         * -----------------------------------------------------
+         */
 
         notificationService.notify(
 
                 actor,
 
-                "You successfully created Plot " + savedPlot.getPlotNo()
-
+                "You successfully created Plot "
+                        + savedPlot.getPlotNo()
         );
+
+
+        /*
+         * -----------------------------------------------------
+         * NOTIFY OTHER ADMINS
+         * -----------------------------------------------------
+         */
 
         userRepository.findByRole(Role.ADMIN)
 
                 .stream()
 
-                .filter(admin -> !admin.getId().equals(actor.getId()))
+                .filter(
+                        admin ->
+                                !admin.getId()
+                                        .equals(
+                                                actor.getId()
+                                        )
+                )
 
-                .forEach(admin ->
+                .forEach(
 
-                        notificationService.notify(
+                        admin ->
 
-                                admin,
+                                notificationService.notify(
 
-                                actor.getFullName()
+                                        admin,
 
-                                        + " created Plot "
-
-                                        + savedPlot.getPlotNo()
-
-                        )
-
+                                        actor.getFullName()
+                                                + " created Plot "
+                                                + savedPlot.getPlotNo()
+                                )
                 );
 
-        return ResponseEntity.ok(savedPlot);
 
+        /*
+         * =====================================================
+         * GMAIL - FARMER
+         * =====================================================
+         */
+
+        try {
+
+            emailService.sendPlotEmail(
+
+                    farmer,
+
+                    savedPlot,
+
+                    "CREATED"
+            );
+
+
+            auditLogger.log(
+
+                    actor.getUsername(),
+
+                    "SEND PLOT EMAIL",
+
+                    "EMAIL",
+
+                    "Plot creation email sent successfully to "
+                            + farmer.getEmail(),
+
+                    "SUCCESS"
+            );
+
+        } catch (Exception e) {
+
+            auditLogger.log(
+
+                    actor.getUsername(),
+
+                    "SEND PLOT EMAIL",
+
+                    "EMAIL",
+
+                    "Plot was created successfully but "
+                            + "email could not be sent.",
+
+                    "FAILED"
+            );
+        }
+
+
+        return ResponseEntity.ok(
+                savedPlot
+        );
     }
 
+
     /*
+     * =========================================================
      * GET FARMER PLOTS
+     * =========================================================
      */
 
     @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR','FARMER')")
     @GetMapping("/farmer/{farmerId}")
     public List<Plot> getFarmerPlots(
+
             @PathVariable Long farmerId
+
     ) {
 
         return plotRepository.findByFarmerId(
                 farmerId
         );
-
     }
+
+
+    /*
+     * =========================================================
+     * GET SUPERVISOR'S PLOTS
+     * =========================================================
+     */
 
     @PreAuthorize("hasRole('SUPERVISOR')")
     @GetMapping("/my-plots")
     public List<Plot> getMyPlots(
+
             Authentication authentication
+
     ) {
 
         String username =
                 authentication.getName();
 
+
         User supervisor =
                 userRepository
+
                         .findByUsername(username)
+
                         .orElseThrow();
+
 
         return plotRepository
                 .findByBlockOrderByIdDesc(
@@ -220,9 +381,13 @@ public class PlotController {
                 );
     }
 
+
     /*
+     * =========================================================
      * UPDATE PLOT
+     * =========================================================
      */
+
     @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
     @PutMapping("/{id}")
     public ResponseEntity<?> updatePlot(
@@ -233,31 +398,109 @@ public class PlotController {
 
             Authentication authentication
 
-    ){
+    ) {
 
-        User actor = userRepository
+        User actor =
+                userRepository
 
-                .findByUsername(authentication.getName())
+                        .findByUsername(
+                                authentication.getName()
+                        )
 
-                .orElseThrow();
+                        .orElseThrow();
+
 
         return plotRepository.findById(id)
 
                 .map(plot -> {
 
-                    plot.setSize(updatedPlot.getSize());
 
-                    plot.setSoilType(updatedPlot.getSoilType());
+                    /*
+                     * -----------------------------------------
+                     * SUPERVISOR BLOCK RESTRICTION
+                     * -----------------------------------------
+                     */
 
-                    plot.setLocationDescription(updatedPlot.getLocationDescription());
+                    if (
+                            actor.getRole()
+                                    == Role.SUPERVISOR
+                    ) {
 
-                    plot.setIrrigationMethod(updatedPlot.getIrrigationMethod());
+                        if (
+                                plot.getBlock() == null
+                                        ||
+                                        actor.getBlockName() == null
+                                        ||
+                                        !plot.getBlock()
+                                                .equalsIgnoreCase(
+                                                        actor.getBlockName()
+                                                )
+                        ) {
 
-                    plot.setSeason(updatedPlot.getSeason());
+                            auditLogger.log(
 
-                    plot.setStatus(updatedPlot.getStatus());
+                                    actor.getUsername(),
+
+                                    "UPDATE PLOT",
+
+                                    "PLOT",
+
+                                    "Attempted to update plot outside assigned block",
+
+                                    "FAILED"
+                            );
+
+
+                            return ResponseEntity
+                                    .badRequest()
+                                    .body(
+                                            "You can only manage plots within your block"
+                                    );
+                        }
+                    }
+
+
+                    /*
+                     * -----------------------------------------
+                     * UPDATE FIELDS
+                     * -----------------------------------------
+                     */
+
+                    plot.setSize(
+                            updatedPlot.getSize()
+                    );
+
+                    plot.setSoilType(
+                            updatedPlot.getSoilType()
+                    );
+
+                    plot.setLocationDescription(
+                            updatedPlot
+                                    .getLocationDescription()
+                    );
+
+                    plot.setIrrigationMethod(
+                            updatedPlot
+                                    .getIrrigationMethod()
+                    );
+
+                    plot.setSeason(
+                            updatedPlot.getSeason()
+                    );
+
+                    plot.setStatus(
+                            updatedPlot.getStatus()
+                    );
+
 
                     plotRepository.save(plot);
+
+
+                    /*
+                     * -----------------------------------------
+                     * AUDIT
+                     * -----------------------------------------
+                     */
 
                     auditLogger.log(
 
@@ -267,35 +510,98 @@ public class PlotController {
 
                             "PLOT",
 
-                            "Updated Plot " + plot.getPlotNo(),
+                            "Updated Plot "
+                                    + plot.getPlotNo(),
 
                             "SUCCESS"
-
                     );
+
+
+                    /*
+                     * -----------------------------------------
+                     * FARMER NOTIFICATION
+                     * -----------------------------------------
+                     */
 
                     notificationService.notify(
 
                             plot.getFarmer(),
 
                             "Your plot "
-
                                     + plot.getPlotNo()
-
                                     + " information has been updated."
-
                     );
+
+
+                    /*
+                     * -----------------------------------------
+                     * ACTOR NOTIFICATION
+                     * -----------------------------------------
+                     */
 
                     notificationService.notify(
 
                             actor,
 
                             "You updated Plot "
-
                                     + plot.getPlotNo()
-
                     );
 
-                    return ResponseEntity.ok(plot);
+
+                    /*
+                     * -----------------------------------------
+                     * GMAIL - FARMER
+                     * -----------------------------------------
+                     */
+
+                    try {
+
+                        emailService.sendPlotEmail(
+
+                                plot.getFarmer(),
+
+                                plot,
+
+                                "UPDATED"
+                        );
+
+
+                        auditLogger.log(
+
+                                actor.getUsername(),
+
+                                "SEND PLOT EMAIL",
+
+                                "EMAIL",
+
+                                "Plot update email sent successfully to "
+                                        + plot.getFarmer()
+                                        .getEmail(),
+
+                                "SUCCESS"
+                        );
+
+                    } catch (Exception e) {
+
+                        auditLogger.log(
+
+                                actor.getUsername(),
+
+                                "SEND PLOT EMAIL",
+
+                                "EMAIL",
+
+                                "Plot was updated successfully but "
+                                        + "email could not be sent.",
+
+                                "FAILED"
+                        );
+                    }
+
+
+                    return ResponseEntity.ok(
+                            plot
+                    );
 
                 })
 
@@ -312,16 +618,19 @@ public class PlotController {
                             "Plot not found",
 
                             "FAILED"
-
                     );
 
-                    return ResponseEntity.notFound().build();
 
+                    return ResponseEntity.notFound()
+                            .build();
                 });
-
     }
+
+
     /*
+     * =========================================================
      * DELETE PLOT
+     * =========================================================
      */
 
     @PreAuthorize("hasRole('ADMIN')")
@@ -332,21 +641,27 @@ public class PlotController {
 
             Authentication authentication
 
-    ){
+    ) {
 
-        User actor = userRepository
+        User actor =
+                userRepository
 
-                .findByUsername(authentication.getName())
+                        .findByUsername(
+                                authentication.getName()
+                        )
 
-                .orElseThrow();
+                        .orElseThrow();
 
-        Plot plot = plotRepository
 
-                .findById(id)
+        Plot plot =
+                plotRepository
 
-                .orElse(null);
+                        .findById(id)
 
-        if(plot == null){
+                        .orElse(null);
+
+
+        if (plot == null) {
 
             auditLogger.log(
 
@@ -359,14 +674,37 @@ public class PlotController {
                     "Plot not found",
 
                     "FAILED"
-
             );
 
-            return ResponseEntity.notFound().build();
 
+            return ResponseEntity.notFound()
+                    .build();
         }
 
+
+        /*
+         * Save farmer reference before deleting plot.
+         */
+
+        User farmer =
+                plot.getFarmer();
+
+        String plotNo =
+                plot.getPlotNo();
+
+
+        /*
+         * Delete plot.
+         */
+
         plotRepository.delete(plot);
+
+
+        /*
+         * -----------------------------------------------------
+         * AUDIT
+         * -----------------------------------------------------
+         */
 
         auditLogger.log(
 
@@ -376,58 +714,134 @@ public class PlotController {
 
                 "PLOT",
 
-                "Deleted Plot " + plot.getPlotNo(),
+                "Deleted Plot "
+                        + plotNo,
 
                 "SUCCESS"
-
         );
+
+
+        /*
+         * -----------------------------------------------------
+         * FARMER NOTIFICATION
+         * -----------------------------------------------------
+         */
 
         notificationService.notify(
 
-                plot.getFarmer(),
+                farmer,
 
                 "Plot "
-
-                        + plot.getPlotNo()
-
+                        + plotNo
                         + " has been removed from your account."
-
         );
+
+
+        /*
+         * -----------------------------------------------------
+         * ACTOR NOTIFICATION
+         * -----------------------------------------------------
+         */
 
         notificationService.notify(
 
                 actor,
 
                 "You deleted Plot "
-
-                        + plot.getPlotNo()
-
+                        + plotNo
         );
+
+
+        /*
+         * =====================================================
+         * GMAIL - FARMER
+         * =====================================================
+         */
+
+        try {
+
+            emailService.sendPlotEmail(
+
+                    farmer,
+
+                    plot,
+
+                    "DELETED"
+            );
+
+
+            auditLogger.log(
+
+                    actor.getUsername(),
+
+                    "SEND PLOT EMAIL",
+
+                    "EMAIL",
+
+                    "Plot deletion email sent successfully to "
+                            + (
+                            farmer != null
+                                    ? farmer.getEmail()
+                                    : "N/A"
+                    ),
+
+                    "SUCCESS"
+            );
+
+        } catch (Exception e) {
+
+            auditLogger.log(
+
+                    actor.getUsername(),
+
+                    "SEND PLOT EMAIL",
+
+                    "EMAIL",
+
+                    "Plot was deleted successfully but "
+                            + "email could not be sent.",
+
+                    "FAILED"
+            );
+        }
+
 
         return ResponseEntity.ok(
 
                 "Plot deleted successfully"
-
         );
-
     }
 
+
+    /*
+     * =========================================================
+     * FARMER'S OWN PLOTS
+     * =========================================================
+     */
 
     @PreAuthorize("hasRole('FARMER')")
     @GetMapping("/my-farm-plots")
     public List<Plot> getMyFarmPlots(
+
             Authentication authentication
-    ){
+
+    ) {
 
         String username =
                 authentication.getName();
 
-        User farmer = userRepository
-                .findByUsername(username)
-                .orElseThrow();
+
+        User farmer =
+                userRepository
+
+                        .findByUsername(username)
+
+                        .orElseThrow();
+
 
         return plotRepository.findByFarmerId(
                 farmer.getId()
         );
     }
+
 }

@@ -3,8 +3,11 @@ package suza.irifams.water;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
+
 import suza.irifams.audit.AuditLogger;
+import suza.irifams.email.EmailService;
 import suza.irifams.enums.Role;
 import suza.irifams.enums.ScheduleStatus;
 import suza.irifams.notification.NotificationService;
@@ -12,7 +15,7 @@ import suza.irifams.plot.Plot;
 import suza.irifams.plot.PlotRepository;
 import suza.irifams.user.User;
 import suza.irifams.user.UserRepository;
-import org.springframework.security.core.Authentication;
+
 import java.util.List;
 
 @RestController
@@ -25,37 +28,47 @@ public class WaterScheduleController {
     private final UserRepository userRepository;
     private final NotificationService notificationService;
     private final AuditLogger auditLogger;
+    private final EmailService emailService;
+
 
     /*
-     * Get all schedules
+     * =========================================================
+     * GET ALL SCHEDULES
+     * =========================================================
      */
 
     @GetMapping
-    @PreAuthorize(
-            "hasAnyRole('ADMIN','SUPERVISOR','STAKEHOLDER')")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
     public List<WaterSchedule> getAllSchedules() {
 
         return repository.findAll();
-
     }
 
+
     /*
-     * Farmer schedules by plot
+     * =========================================================
+     * FARMER SCHEDULES BY PLOT
+     * =========================================================
      */
 
     @GetMapping("/plot/{plotId}")
     @PreAuthorize(
-            "hasAnyRole('FARMER','ADMIN','SUPERVISOR')")
+            "hasAnyRole('FARMER','ADMIN','SUPERVISOR')"
+    )
     public List<WaterSchedule> getPlotSchedules(
+
             @PathVariable Long plotId
+
     ) {
 
         return repository.findByPlotId(plotId);
-
     }
 
+
     /*
-     * Create schedule
+     * =========================================================
+     * CREATE SCHEDULE
+     * =========================================================
      */
 
     @PostMapping
@@ -73,11 +86,12 @@ public class WaterScheduleController {
         String username =
                 authentication.getName();
 
-        User supervisor = userRepository
 
-                .findByUsername(username)
+        User supervisor =
+                userRepository
+                        .findByUsername(username)
+                        .orElse(null);
 
-                .orElse(null);
 
         if (supervisor == null) {
 
@@ -93,11 +107,12 @@ public class WaterScheduleController {
                     .body("Supervisor not found");
         }
 
-        Plot plot = plotRepository
 
-                .findById(plotId)
+        Plot plot =
+                plotRepository
+                        .findById(plotId)
+                        .orElse(null);
 
-                .orElse(null);
 
         if (plot == null) {
 
@@ -113,15 +128,28 @@ public class WaterScheduleController {
                     .body("Plot not found");
         }
 
-        // Supervisor aruhusiwe kupanga
-        // schedule za block yake tu
 
-        if (supervisor.getRole().name()
-                .equals("SUPERVISOR")) {
+        /*
+         * =====================================================
+         * SUPERVISOR BLOCK RESTRICTION
+         * =====================================================
+         */
 
-            if (!plot.getBlock()
-                    .equalsIgnoreCase(
-                            supervisor.getBlockName())) {
+        if (
+                supervisor.getRole()
+                        == Role.SUPERVISOR
+        ) {
+
+            if (
+                    plot.getBlock() == null
+                            ||
+                            supervisor.getBlockName() == null
+                            ||
+                            !plot.getBlock()
+                                    .equalsIgnoreCase(
+                                            supervisor.getBlockName()
+                                    )
+            ) {
 
                 auditLogger.log(
                         supervisor.getUsername(),
@@ -138,15 +166,41 @@ public class WaterScheduleController {
             }
         }
 
+
+        /*
+         * =====================================================
+         * ASSIGN RELATIONSHIPS
+         * =====================================================
+         */
+
         schedule.setPlot(plot);
 
         schedule.setSupervisor(supervisor);
 
+
         if (schedule.getStatus() == null) {
-            schedule.setStatus(ScheduleStatus.UPCOMING);
+
+            schedule.setStatus(
+                    ScheduleStatus.UPCOMING
+            );
         }
 
-        WaterSchedule saved = repository.save(schedule);
+
+        /*
+         * =====================================================
+         * SAVE
+         * =====================================================
+         */
+
+        WaterSchedule saved =
+                repository.save(schedule);
+
+
+        /*
+         * =====================================================
+         * AUDIT
+         * =====================================================
+         */
 
         auditLogger.log(
 
@@ -160,88 +214,195 @@ public class WaterScheduleController {
                         + plot.getPlotNo(),
 
                 "SUCCESS"
-
         );
 
-// Farmer
+
+        /*
+         * =====================================================
+         * NOTIFICATION TO FARMER
+         * =====================================================
+         */
+
         notificationService.notify(
 
                 plot.getFarmer(),
 
                 "New irrigation schedule has been assigned for Plot "
                         + plot.getPlotNo()
-
         );
 
-// Supervisor
+
+        /*
+         * =====================================================
+         * NOTIFICATION TO SUPERVISOR
+         * =====================================================
+         */
+
         notificationService.notify(
 
                 supervisor,
 
                 "You created a new irrigation schedule for Plot "
                         + plot.getPlotNo()
-
         );
 
-// Other Admins
+
+        /*
+         * =====================================================
+         * NOTIFICATION TO OTHER ADMINS
+         * =====================================================
+         */
+
         userRepository.findByRole(Role.ADMIN)
 
                 .stream()
 
-                .filter(admin -> !admin.getId().equals(supervisor.getId()))
+                .filter(
+                        admin ->
+                                !admin.getId()
+                                        .equals(
+                                                supervisor.getId()
+                                        )
+                )
 
-                .forEach(admin ->
+                .forEach(
 
-                        notificationService.notify(
+                        admin ->
 
-                                admin,
+                                notificationService.notify(
 
-                                "New irrigation schedule created for Plot "
-                                        + plot.getPlotNo()
+                                        admin,
 
-                        )
-
+                                        "New irrigation schedule created for Plot "
+                                                + plot.getPlotNo()
+                                )
                 );
+
+
+        /*
+         * =====================================================
+         * GMAIL - FARMER
+         * =====================================================
+         */
+
+        try {
+
+            emailService.sendWaterScheduleEmail(
+
+                    plot.getFarmer(),
+
+                    saved,
+
+                    "CREATED"
+            );
+
+
+            auditLogger.log(
+
+                    supervisor.getUsername(),
+
+                    "SEND WATER SCHEDULE EMAIL",
+
+                    "EMAIL",
+
+                    "Water schedule creation email sent successfully to "
+                            + plot.getFarmer().getEmail(),
+
+                    "SUCCESS"
+            );
+
+        } catch (Exception e) {
+
+            /*
+             * Email failure must NOT cancel
+             * the successful schedule creation.
+             */
+
+            auditLogger.log(
+
+                    supervisor.getUsername(),
+
+                    "SEND WATER SCHEDULE EMAIL",
+
+                    "EMAIL",
+
+                    "Water schedule was created successfully but "
+                            + "email could not be sent.",
+
+                    "FAILED"
+            );
+        }
+
 
         return ResponseEntity.ok(saved);
     }
 
 
+    /*
+     * =========================================================
+     * FARMER'S OWN SCHEDULES
+     * =========================================================
+     */
+
     @PreAuthorize("hasRole('FARMER')")
     @GetMapping("/my-farm-schedules")
     public List<WaterSchedule> getMyFarmSchedules(
-            Authentication authentication){
 
-        String username = authentication.getName();
-
-        User farmer = userRepository
-                .findByUsername(username)
-                .orElseThrow();
-
-        return repository.findByPlot_Farmer_IdOrderByIrrigationDateAsc(
-                farmer.getId()
-        );
-    }
-
-    @PreAuthorize("hasRole('SUPERVISOR')")
-    @GetMapping("/my-plots")
-    public List<Plot> getMyPlots(
             Authentication authentication
+
     ) {
 
         String username =
                 authentication.getName();
 
-        User supervisor = userRepository
-                .findByUsername(username)
-                .orElseThrow();
+
+        User farmer =
+                userRepository
+                        .findByUsername(username)
+                        .orElseThrow();
+
+
+        return repository
+                .findByPlot_Farmer_IdOrderByIrrigationDateAsc(
+                        farmer.getId()
+                );
+    }
+
+
+    /*
+     * =========================================================
+     * SUPERVISOR'S PLOTS
+     * =========================================================
+     */
+
+    @PreAuthorize("hasRole('SUPERVISOR')")
+    @GetMapping("/my-plots")
+    public List<Plot> getMyPlots(
+
+            Authentication authentication
+
+    ) {
+
+        String username =
+                authentication.getName();
+
+
+        User supervisor =
+                userRepository
+                        .findByUsername(username)
+                        .orElseThrow();
+
 
         return plotRepository.findByBlock(
                 supervisor.getBlockName()
         );
     }
+
+
     /*
-     * Update schedule
+     * =========================================================
+     * UPDATE SCHEDULE
+     * =========================================================
      */
 
     @PutMapping("/{id}")
@@ -254,40 +415,112 @@ public class WaterScheduleController {
 
             Authentication authentication
 
-    ){
+    ) {
 
         return repository.findById(id)
 
                 .map(schedule -> {
 
-                    User actor = userRepository
+                    User actor =
+                            userRepository
 
-                            .findByUsername(authentication.getName())
+                                    .findByUsername(
+                                            authentication.getName()
+                                    )
 
-                            .orElseThrow();
+                                    .orElseThrow();
+
+
+                    /*
+                     * -----------------------------------------
+                     * SUPERVISOR BLOCK RESTRICTION
+                     * -----------------------------------------
+                     */
+
+                    if (
+                            actor.getRole()
+                                    == Role.SUPERVISOR
+                    ) {
+
+                        if (
+                                schedule.getPlot() == null
+                                        ||
+                                        schedule.getPlot().getBlock() == null
+                                        ||
+                                        actor.getBlockName() == null
+                                        ||
+                                        !schedule.getPlot()
+                                                .getBlock()
+                                                .equalsIgnoreCase(
+                                                        actor.getBlockName()
+                                                )
+                        ) {
+
+                            auditLogger.log(
+
+                                    actor.getUsername(),
+
+                                    "UPDATE WATER SCHEDULE",
+
+                                    "IRRIGATION",
+
+                                    "Attempted to update schedule outside assigned block",
+
+                                    "FAILED"
+                            );
+
+                            return ResponseEntity
+                                    .badRequest()
+                                    .body(
+                                            "You can only manage schedules within your block"
+                                    );
+                        }
+                    }
+
+
+                    /*
+                     * -----------------------------------------
+                     * UPDATE FIELDS
+                     * -----------------------------------------
+                     */
 
                     schedule.setIrrigationDate(
-                            updated.getIrrigationDate());
+                            updated.getIrrigationDate()
+                    );
 
                     schedule.setStartTime(
-                            updated.getStartTime());
+                            updated.getStartTime()
+                    );
 
                     schedule.setEndTime(
-                            updated.getEndTime());
+                            updated.getEndTime()
+                    );
 
                     schedule.setCanal(
-                            updated.getCanal());
+                            updated.getCanal()
+                    );
 
                     schedule.setSeason(
-                            updated.getSeason());
+                            updated.getSeason()
+                    );
 
                     schedule.setStatus(
-                            updated.getStatus());
+                            updated.getStatus()
+                    );
 
                     schedule.setNotes(
-                            updated.getNotes());
+                            updated.getNotes()
+                    );
+
 
                     repository.save(schedule);
+
+
+                    /*
+                     * -----------------------------------------
+                     * AUDIT
+                     * -----------------------------------------
+                     */
 
                     auditLogger.log(
 
@@ -301,16 +534,28 @@ public class WaterScheduleController {
                                     + schedule.getId(),
 
                             "SUCCESS"
-
                     );
+
+
+                    /*
+                     * -----------------------------------------
+                     * FARMER NOTIFICATION
+                     * -----------------------------------------
+                     */
 
                     notificationService.notify(
 
                             schedule.getPlot().getFarmer(),
 
                             "Your irrigation schedule has been updated."
-
                     );
+
+
+                    /*
+                     * -----------------------------------------
+                     * ACTOR NOTIFICATION
+                     * -----------------------------------------
+                     */
 
                     notificationService.notify(
 
@@ -318,30 +563,97 @@ public class WaterScheduleController {
 
                             "You updated irrigation schedule #"
                                     + schedule.getId()
-
                     );
+
+
+                    /*
+                     * -----------------------------------------
+                     * ADMIN NOTIFICATIONS
+                     * -----------------------------------------
+                     */
 
                     userRepository.findByRole(Role.ADMIN)
 
                             .stream()
 
-                            .filter(admin -> !admin.getId().equals(actor.getId()))
+                            .filter(
+                                    admin ->
+                                            !admin.getId()
+                                                    .equals(
+                                                            actor.getId()
+                                                    )
+                            )
 
-                            .forEach(admin ->
+                            .forEach(
 
-                                    notificationService.notify(
+                                    admin ->
 
-                                            admin,
+                                            notificationService.notify(
 
-                                            "Water schedule #"
-                                                    + schedule.getId()
-                                                    + " has been updated."
+                                                    admin,
 
-                                    )
-
+                                                    "Water schedule #"
+                                                            + schedule.getId()
+                                                            + " has been updated."
+                                            )
                             );
 
-                    return ResponseEntity.ok(schedule);
+
+                    /*
+                     * -----------------------------------------
+                     * GMAIL - FARMER
+                     * -----------------------------------------
+                     */
+
+                    try {
+
+                        emailService.sendWaterScheduleEmail(
+
+                                schedule.getPlot().getFarmer(),
+
+                                schedule,
+
+                                "UPDATED"
+                        );
+
+
+                        auditLogger.log(
+
+                                actor.getUsername(),
+
+                                "SEND WATER SCHEDULE EMAIL",
+
+                                "EMAIL",
+
+                                "Water schedule update email sent successfully to "
+                                        + schedule.getPlot()
+                                        .getFarmer()
+                                        .getEmail(),
+
+                                "SUCCESS"
+                        );
+
+                    } catch (Exception e) {
+
+                        auditLogger.log(
+
+                                actor.getUsername(),
+
+                                "SEND WATER SCHEDULE EMAIL",
+
+                                "EMAIL",
+
+                                "Water schedule was updated successfully but "
+                                        + "email could not be sent.",
+
+                                "FAILED"
+                        );
+                    }
+
+
+                    return ResponseEntity.ok(
+                            schedule
+                    );
 
                 })
 
@@ -349,7 +661,7 @@ public class WaterScheduleController {
 
                     auditLogger.log(
 
-                            "UNKNOWN",
+                            authentication.getName(),
 
                             "UPDATE WATER SCHEDULE",
 
@@ -358,17 +670,19 @@ public class WaterScheduleController {
                             "Schedule not found",
 
                             "FAILED"
-
                     );
 
-                    return ResponseEntity.notFound().build();
 
+                    return ResponseEntity.notFound()
+                            .build();
                 });
-
     }
 
+
     /*
-     * Delete schedule
+     * =========================================================
+     * DELETE SCHEDULE
+     * =========================================================
      */
 
     @DeleteMapping("/{id}")
@@ -379,21 +693,27 @@ public class WaterScheduleController {
 
             Authentication authentication
 
-    ){
+    ) {
 
-        User actor = userRepository
+        User actor =
+                userRepository
 
-                .findByUsername(authentication.getName())
+                        .findByUsername(
+                                authentication.getName()
+                        )
 
-                .orElseThrow();
+                        .orElseThrow();
 
-        WaterSchedule schedule = repository
 
-                .findById(id)
+        WaterSchedule schedule =
+                repository
 
-                .orElse(null);
+                        .findById(id)
 
-        if(schedule == null){
+                        .orElse(null);
+
+
+        if (schedule == null) {
 
             auditLogger.log(
 
@@ -406,13 +726,35 @@ public class WaterScheduleController {
                     "Schedule not found",
 
                     "FAILED"
-
             );
 
-            return ResponseEntity.notFound().build();
+            return ResponseEntity.notFound()
+                    .build();
         }
 
+
+        /*
+         * Save farmer reference before deletion.
+         */
+
+        User farmer =
+                schedule.getPlot() != null
+                        ? schedule.getPlot().getFarmer()
+                        : null;
+
+
+        Long scheduleId =
+                schedule.getId();
+
+
         repository.delete(schedule);
+
+
+        /*
+         * =====================================================
+         * AUDIT
+         * =====================================================
+         */
 
         auditLogger.log(
 
@@ -423,39 +765,109 @@ public class WaterScheduleController {
                 "IRRIGATION",
 
                 "Deleted schedule #"
-                        + schedule.getId(),
+                        + scheduleId,
 
                 "SUCCESS"
-
         );
+
+
+        /*
+         * =====================================================
+         * FARMER NOTIFICATION
+         * =====================================================
+         */
 
         notificationService.notify(
 
-                schedule.getPlot().getFarmer(),
+                farmer,
 
                 "Your irrigation schedule has been deleted."
-
         );
+
+
+        /*
+         * =====================================================
+         * ACTOR NOTIFICATION
+         * =====================================================
+         */
 
         notificationService.notify(
 
                 actor,
 
                 "You deleted irrigation schedule #"
-                        + schedule.getId()
-
+                        + scheduleId
         );
+
+
+        /*
+         * =====================================================
+         * GMAIL - FARMER
+         * =====================================================
+         *
+         * Email is sent before the deleted entity is no longer
+         * available. The farmer reference is already stored.
+         */
+
+        try {
+
+            emailService.sendWaterScheduleEmail(
+
+                    farmer,
+
+                    schedule,
+
+                    "DELETED"
+            );
+
+
+            auditLogger.log(
+
+                    actor.getUsername(),
+
+                    "SEND WATER SCHEDULE EMAIL",
+
+                    "EMAIL",
+
+                    "Water schedule deletion email sent successfully to "
+                            + (
+                            farmer != null
+                                    ? farmer.getEmail()
+                                    : "N/A"
+                    ),
+
+                    "SUCCESS"
+            );
+
+        } catch (Exception e) {
+
+            auditLogger.log(
+
+                    actor.getUsername(),
+
+                    "SEND WATER SCHEDULE EMAIL",
+
+                    "EMAIL",
+
+                    "Water schedule was deleted successfully but "
+                            + "email could not be sent.",
+
+                    "FAILED"
+            );
+        }
+
 
         return ResponseEntity.ok(
 
                 "Schedule deleted successfully"
-
         );
-
     }
 
+
     /*
-     * Supervisor schedules by own block
+     * =========================================================
+     * SUPERVISOR SCHEDULES BY OWN BLOCK
+     * =========================================================
      */
 
     @PreAuthorize("hasRole('SUPERVISOR')")
@@ -469,17 +881,19 @@ public class WaterScheduleController {
         String username =
                 authentication.getName();
 
-        User supervisor = userRepository
 
-                .findByUsername(username)
+        User supervisor =
+                userRepository
 
-                .orElseThrow();
+                        .findByUsername(username)
+
+                        .orElseThrow();
+
 
         return repository.findByPlot_Block(
 
                 supervisor.getBlockName()
-
         );
-
     }
+
 }

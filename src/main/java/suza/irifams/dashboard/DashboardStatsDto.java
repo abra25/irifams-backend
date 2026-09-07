@@ -11,7 +11,6 @@ public class DashboardStatsDto {
 
     private long totalFarmers;
     private long totalSupervisors;
-    private long totalStakeholders;
 
     private long totalPlots;
 
@@ -27,7 +26,6 @@ public class DashboardStatsDto {
     private long waterSchedules;
 
     private long myPlots;
-
 
     private Double outstandingPayments;
 

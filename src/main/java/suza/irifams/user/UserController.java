@@ -6,7 +6,9 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
+
 import suza.irifams.audit.AuditLogger;
+import suza.irifams.email.EmailService;
 import suza.irifams.enums.Role;
 import suza.irifams.notification.NotificationService;
 
@@ -21,23 +23,24 @@ public class UserController {
     private final PasswordEncoder passwordEncoder;
     private final AuditLogger auditLogger;
     private final NotificationService notificationService;
+    private final EmailService emailService;
 
-    /*
-     * GET ALL USERS
-     */
+
+    // =========================================================
+    // GET ALL USERS
+    // =========================================================
 
     @PreAuthorize("hasRole('ADMIN')")
     @GetMapping
     public List<User> getAllUsers() {
 
         return userRepository.findAll();
-
     }
 
 
-    /*
-     * GET USER BY ID
-     */
+    // =========================================================
+    // GET USER BY ID
+    // =========================================================
 
     @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
     @GetMapping("/{id}")
@@ -52,13 +55,12 @@ public class UserController {
                 .orElse(
                         ResponseEntity.notFound().build()
                 );
-
     }
 
 
-    /*
-     * CREATE USER
-     */
+    // =========================================================
+    // CREATE USER
+    // =========================================================
 
     @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
     @PostMapping
@@ -74,7 +76,16 @@ public class UserController {
                 .findByUsername(authentication.getName())
                 .orElseThrow();
 
-        if (userRepository.existsByUsername(user.getUsername())) {
+
+        // -----------------------------------------------------
+        // Check username
+        // -----------------------------------------------------
+
+        if (
+                userRepository.existsByUsername(
+                        user.getUsername()
+                )
+        ) {
 
             auditLogger.log(
                     actor.getUsername(),
@@ -88,61 +99,131 @@ public class UserController {
                     .body("Username already exists");
         }
 
+
+        // -----------------------------------------------------
+        // Encode password
+        // -----------------------------------------------------
+
         user.setPassword(
-                passwordEncoder.encode(user.getPassword())
+                passwordEncoder.encode(
+                        user.getPassword()
+                )
         );
 
         user.setEnabled(true);
 
-        User savedUser = userRepository.save(user);
+        user.setTemporaryPassword(false);
+
+
+        // -----------------------------------------------------
+        // Save user
+        // -----------------------------------------------------
+
+        User savedUser =
+                userRepository.save(user);
+
+
+        // -----------------------------------------------------
+        // Audit
+        // -----------------------------------------------------
 
         auditLogger.log(
                 actor.getUsername(),
                 "CREATE USER",
                 "USER",
-                "Created user " + savedUser.getUsername(),
+                "Created user "
+                        + savedUser.getUsername(),
                 "SUCCESS"
         );
+
+
+        // -----------------------------------------------------
+        // Notification to new user
+        // -----------------------------------------------------
 
         notificationService.notify(
                 savedUser,
                 "Your IRIFAMS account has been created successfully."
         );
 
+
+        // -----------------------------------------------------
+        // Notification to actor
+        // -----------------------------------------------------
+
         notificationService.notify(
                 actor,
-                "You created account for " + savedUser.getFullName()
+                "You created account for "
+                        + savedUser.getFullName()
         );
 
-        if(actor.getRole() == Role.SUPERVISOR){
+
+        // -----------------------------------------------------
+        // Notify admins if actor is Supervisor
+        // -----------------------------------------------------
+
+        if (
+                actor.getRole() == Role.SUPERVISOR
+        ) {
 
             userRepository.findByRole(Role.ADMIN)
                     .forEach(admin ->
 
                             notificationService.notify(
-
                                     admin,
-
                                     actor.getFullName()
                                             + " created user "
                                             + savedUser.getFullName()
-
                             )
-
                     );
-
         }
 
-        return ResponseEntity.ok(savedUser);
 
+        // -----------------------------------------------------
+        // Send account creation email
+        // -----------------------------------------------------
+
+        try {
+
+            emailService.sendAccountCreatedEmail(
+                    savedUser
+            );
+
+
+            auditLogger.log(
+                    actor.getUsername(),
+                    "SEND ACCOUNT EMAIL",
+                    "EMAIL",
+                    "Account creation email sent successfully to "
+                            + savedUser.getEmail(),
+                    "SUCCESS"
+            );
+
+
+        } catch (Exception e) {
+
+            auditLogger.log(
+                    actor.getUsername(),
+                    "SEND ACCOUNT EMAIL",
+                    "EMAIL",
+                    "User account was created successfully but "
+                            + "account creation email could not be sent.",
+                    "FAILED"
+            );
+        }
+
+
+        return ResponseEntity.ok(
+                savedUser
+        );
     }
 
 
-    /*
-     * UPDATE USER
-     */
+    // =========================================================
+    // UPDATE USER
+    // =========================================================
 
-    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR','STAKEHOLDER')")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
     @PutMapping("/{id}")
     public ResponseEntity<?> updateUser(
 
@@ -158,47 +239,116 @@ public class UserController {
                 .findByUsername(authentication.getName())
                 .orElseThrow();
 
+
         return userRepository.findById(id)
 
                 .map(user -> {
 
-                    user.setFullName(updatedUser.getFullName());
+                    user.setFullName(
+                            updatedUser.getFullName()
+                    );
 
-                    user.setPhone(updatedUser.getPhone());
+                    user.setPhone(
+                            updatedUser.getPhone()
+                    );
 
-                    user.setEmail(updatedUser.getEmail());
+                    user.setEmail(
+                            updatedUser.getEmail()
+                    );
 
-                    user.setGender(updatedUser.getGender());
+                    user.setGender(
+                            updatedUser.getGender()
+                    );
 
-                    user.setBlockName(updatedUser.getBlockName());
+                    user.setBlockName(
+                            updatedUser.getBlockName()
+                    );
 
-                    user.setInstitution(updatedUser.getInstitution());
+                    user.setInstitution(
+                            updatedUser.getInstitution()
+                    );
 
-                    user.setRole(updatedUser.getRole());
+                    user.setRole(
+                            updatedUser.getRole()
+                    );
 
-                    user.setImage(updatedUser.getImage());
+                    user.setImage(
+                            updatedUser.getImage()
+                    );
 
-                    User saved = userRepository.save(user);
+
+                    User saved =
+                            userRepository.save(user);
+
+
+                    // -------------------------------------------------
+                    // Audit
+                    // -------------------------------------------------
 
                     auditLogger.log(
                             actor.getUsername(),
                             "UPDATE USER",
                             "USER",
-                            "Updated user " + saved.getUsername(),
+                            "Updated user "
+                                    + saved.getUsername(),
                             "SUCCESS"
                     );
+
+
+                    // -------------------------------------------------
+                    // In-app notifications
+                    // -------------------------------------------------
 
                     notificationService.notify(
                             saved,
                             "Your profile information has been updated."
                     );
 
+
                     notificationService.notify(
                             actor,
-                            "You updated " + saved.getFullName()
+                            "You updated "
+                                    + saved.getFullName()
                     );
 
-                    return ResponseEntity.ok(saved);
+
+                    // -------------------------------------------------
+                    // Email notification
+                    // -------------------------------------------------
+
+                    try {
+
+                        emailService.sendProfileUpdatedEmail(
+                                saved
+                        );
+
+
+                        auditLogger.log(
+                                actor.getUsername(),
+                                "SEND PROFILE EMAIL",
+                                "EMAIL",
+                                "Profile update email sent successfully to "
+                                        + saved.getEmail(),
+                                "SUCCESS"
+                        );
+
+
+                    } catch (Exception e) {
+
+                        auditLogger.log(
+                                actor.getUsername(),
+                                "SEND PROFILE EMAIL",
+                                "EMAIL",
+                                "Profile was updated successfully but "
+                                        + "profile update email could not be sent.",
+                                "FAILED"
+                        );
+                    }
+
+
+                    return ResponseEntity.ok(
+                            saved
+                    );
 
                 })
 
@@ -212,16 +362,17 @@ public class UserController {
                             "FAILED"
                     );
 
-                    return ResponseEntity.notFound().build();
 
+                    return ResponseEntity.notFound()
+                            .build();
                 });
-
     }
 
 
-    /*
-     * DELETE USER
-     */
+    // =========================================================
+    // DELETE USER
+    // =========================================================
+
     @PreAuthorize("hasRole('ADMIN')")
     @DeleteMapping("/{id}")
     public ResponseEntity<?> deleteUser(
@@ -233,12 +384,16 @@ public class UserController {
     ) {
 
         User actor = userRepository
-                .findByUsername(authentication.getName())
+                .findByUsername(
+                        authentication.getName()
+                )
                 .orElseThrow();
+
 
         User user = userRepository
                 .findById(id)
                 .orElse(null);
+
 
         if (user == null) {
 
@@ -250,33 +405,42 @@ public class UserController {
                     "FAILED"
             );
 
-            return ResponseEntity.notFound().build();
+            return ResponseEntity.notFound()
+                    .build();
         }
+
 
         auditLogger.log(
                 actor.getUsername(),
                 "DELETE USER",
                 "USER",
-                "Deleted user " + user.getUsername(),
+                "Deleted user "
+                        + user.getUsername(),
                 "SUCCESS"
         );
 
+
         notificationService.notify(
                 actor,
-                "You deleted account for " + user.getFullName()
+                "You deleted account for "
+                        + user.getFullName()
         );
+
 
         userRepository.delete(user);
 
-        return ResponseEntity.ok("User deleted successfully");
 
+        return ResponseEntity.ok(
+                "User deleted successfully"
+        );
     }
 
 
-    /*
-     * ACTIVATE / DEACTIVATE USER
-     */
+    // =========================================================
+    // ACTIVATE / DEACTIVATE USER
+    // =========================================================
 
+    @PreAuthorize("hasRole('ADMIN')")
     @PatchMapping("/{id}/status")
     public ResponseEntity<?> toggleStatus(
 
@@ -287,47 +451,94 @@ public class UserController {
     ) {
 
         User actor = userRepository
-                .findByUsername(authentication.getName())
+                .findByUsername(
+                        authentication.getName()
+                )
                 .orElseThrow();
+
 
         return userRepository.findById(id)
 
                 .map(user -> {
 
-                    user.setEnabled(!user.isEnabled());
+                    user.setEnabled(
+                            !user.isEnabled()
+                    );
+
 
                     userRepository.save(user);
+
+
+                    // -------------------------------------------------
+                    // Audit
+                    // -------------------------------------------------
 
                     auditLogger.log(
                             actor.getUsername(),
                             "STATUS CHANGED",
                             "USER",
-                            "Changed status for " + user.getUsername(),
+                            "Changed status for "
+                                    + user.getUsername(),
                             "SUCCESS"
                     );
 
+
+                    // -------------------------------------------------
+                    // In-app notification
+                    // -------------------------------------------------
+
                     notificationService.notify(
-
                             user,
-
                             user.isEnabled()
-
                                     ? "Your account has been activated."
-
                                     : "Your account has been deactivated."
-
                     );
 
+
                     notificationService.notify(
-
                             actor,
-
                             "You changed account status for "
                                     + user.getFullName()
-
                     );
 
-                    return ResponseEntity.ok(user);
+
+                    // -------------------------------------------------
+                    // Email notification
+                    // -------------------------------------------------
+
+                    try {
+
+                        emailService.sendAccountStatusEmail(
+                                user
+                        );
+
+
+                        auditLogger.log(
+                                actor.getUsername(),
+                                "SEND STATUS EMAIL",
+                                "EMAIL",
+                                "Account status email sent successfully to "
+                                        + user.getEmail(),
+                                "SUCCESS"
+                        );
+
+
+                    } catch (Exception e) {
+
+                        auditLogger.log(
+                                actor.getUsername(),
+                                "SEND STATUS EMAIL",
+                                "EMAIL",
+                                "Account status was changed successfully but "
+                                        + "status email could not be sent.",
+                                "FAILED"
+                        );
+                    }
+
+
+                    return ResponseEntity.ok(
+                            user
+                    );
 
                 })
 
@@ -341,53 +552,68 @@ public class UserController {
                             "FAILED"
                     );
 
-                    return ResponseEntity.notFound().build();
 
+                    return ResponseEntity.notFound()
+                            .build();
                 });
-
     }
 
-    @PreAuthorize(
-            "hasAnyRole('ADMIN','SUPERVISOR')")
+
+    // =========================================================
+    // GET ALL FARMERS
+    // =========================================================
+
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
     @GetMapping("/farmers")
     public List<User> getFarmers() {
 
         return userRepository.findByRole(
-                suza.irifams.enums.Role.FARMER
+                Role.FARMER
         );
-
     }
 
-    @PreAuthorize(
-            "hasAnyRole('ADMIN','SUPERVISOR')")
+
+    // =========================================================
+    // GET FARMERS BY BLOCK
+    // =========================================================
+
+    @PreAuthorize("hasAnyRole('ADMIN','SUPERVISOR')")
     @GetMapping("/farmers/block/{blockName}")
     public List<User> getFarmersByBlock(
+
             @PathVariable String blockName
+
     ) {
 
         return userRepository.findByRoleAndBlockName(
-                suza.irifams.enums.Role.FARMER,
+                Role.FARMER,
                 blockName
         );
-
     }
+
+
+    // =========================================================
+    // GET SUPERVISOR'S FARMERS
+    // =========================================================
 
     @PreAuthorize("hasRole('SUPERVISOR')")
     @GetMapping("/my-farmers")
     public List<User> getMyFarmers(
+
             Authentication authentication
+
     ) {
 
-        // username wa supervisor aliyelogin
         String username =
                 authentication.getName();
 
-        // pata supervisor kwenye DB
-        User supervisor = userRepository
-                .findByUsername(username)
-                .orElseThrow();
 
-        // rudisha farmers wa block yake tu
+        User supervisor =
+                userRepository
+                        .findByUsername(username)
+                        .orElseThrow();
+
+
         return userRepository
                 .findByRoleAndBlockName(
                         Role.FARMER,
@@ -395,21 +621,34 @@ public class UserController {
                 );
     }
 
+
+    // =========================================================
+    // MY PROFILE
+    // =========================================================
+
     @PreAuthorize("isAuthenticated()")
     @GetMapping("/my-profile")
     public ResponseEntity<?> getMyProfile(
+
             Authentication authentication
+
     ) {
 
-        User user = userRepository
+        User user =
+                userRepository
+                        .findByUsername(
+                                authentication.getName()
+                        )
+                        .orElseThrow();
 
-                .findByUsername(authentication.getName())
-
-                .orElseThrow();
 
         return ResponseEntity.ok(user);
-
     }
+
+
+    // =========================================================
+    // CHANGE PASSWORD
+    // =========================================================
 
     @PreAuthorize("isAuthenticated()")
     @PatchMapping("/change-password")
@@ -419,15 +658,26 @@ public class UserController {
 
             @RequestBody ChangePasswordRequest request
 
-    ){
+    ) {
 
-        User user = userRepository
-                .findByUsername(authentication.getName())
-                .orElseThrow();
+        User user =
+                userRepository
+                        .findByUsername(
+                                authentication.getName()
+                        )
+                        .orElseThrow();
 
-        if(!passwordEncoder.matches(
-                request.getCurrentPassword(),
-                user.getPassword())){
+
+        // -----------------------------------------------------
+        // Verify current password
+        // -----------------------------------------------------
+
+        if (
+                !passwordEncoder.matches(
+                        request.getCurrentPassword(),
+                        user.getPassword()
+                )
+        ) {
 
             auditLogger.log(
                     user.getUsername(),
@@ -437,18 +687,34 @@ public class UserController {
                     "FAILED"
             );
 
-            return ResponseEntity.badRequest()
-                    .body("Current password is incorrect");
 
+            return ResponseEntity.badRequest()
+                    .body(
+                            "Current password is incorrect"
+                    );
         }
 
+
+        // -----------------------------------------------------
+        // Update password
+        // -----------------------------------------------------
+
         user.setPassword(
-                passwordEncoder.encode(request.getNewPassword())
+                passwordEncoder.encode(
+                        request.getNewPassword()
+                )
         );
+
 
         user.setTemporaryPassword(false);
 
+
         userRepository.save(user);
+
+
+        // -----------------------------------------------------
+        // Audit
+        // -----------------------------------------------------
 
         auditLogger.log(
                 user.getUsername(),
@@ -458,15 +724,53 @@ public class UserController {
                 "SUCCESS"
         );
 
+
+        // -----------------------------------------------------
+        // In-app notification
+        // -----------------------------------------------------
+
         notificationService.notify(
                 user,
                 "Your account password has been changed successfully."
         );
 
+
+        // -----------------------------------------------------
+        // Gmail confirmation
+        // -----------------------------------------------------
+
+        try {
+
+            emailService.sendPasswordChangedEmail(
+                    user
+            );
+
+
+            auditLogger.log(
+                    user.getUsername(),
+                    "SEND PASSWORD CHANGE EMAIL",
+                    "EMAIL",
+                    "Password change confirmation email sent successfully to "
+                            + user.getEmail(),
+                    "SUCCESS"
+            );
+
+
+        } catch (Exception e) {
+
+            auditLogger.log(
+                    user.getUsername(),
+                    "SEND PASSWORD CHANGE EMAIL",
+                    "EMAIL",
+                    "Password was changed successfully but "
+                            + "confirmation email could not be sent.",
+                    "FAILED"
+            );
+        }
+
+
         return ResponseEntity.ok(
                 "Password updated successfully"
         );
-
     }
-
 }

@@ -6,8 +6,6 @@ public enum Role {
 
     SUPERVISOR,
 
-    FARMER,
-
-    STAKEHOLDER
+    FARMER
 
 }
